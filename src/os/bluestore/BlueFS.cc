@@ -148,7 +148,7 @@ void BlueFS::_update_logger_stats()
   }
 }
 
-int BlueFS::add_block_device(unsigned id, const string& path)
+int BlueFS::add_block_device(unsigned id, const string& path, bool trim)
 {
   dout(10) << __func__ << " bdev " << id << " path " << path << dendl;
   assert(id < bdev.size());
@@ -159,8 +159,12 @@ int BlueFS::add_block_device(unsigned id, const string& path)
     delete b;
     return r;
   }
+  if (trim) {
+    b->discard(0, b->get_size());
+  }
+
   dout(1) << __func__ << " bdev " << id << " path " << path
-	  << " size " << pretty_si_t(b->get_size()) << "B" << dendl;
+	  << " size " << byte_u_t(b->get_size()) << dendl;
   bdev[id] = b;
   ioc[id] = new IOContext(cct, NULL);
   return 0;
@@ -305,9 +309,9 @@ void BlueFS::get_usage(vector<pair<uint64_t,uint64_t>> *usage)
       (block_all[id].size() - (*usage)[id].first) * 100 / block_all[id].size();
     dout(10) << __func__ << " bdev " << id
 	     << " free " << (*usage)[id].first
-	     << " (" << pretty_si_t((*usage)[id].first) << "B)"
+	     << " (" << byte_u_t((*usage)[id].first) << ")"
 	     << " / " << (*usage)[id].second
-	     << " (" << pretty_si_t((*usage)[id].second) << "B)"
+	     << " (" << byte_u_t((*usage)[id].second) << ")"
 	     << ", used " << used << "%"
 	     << dendl;
   }
@@ -1035,7 +1039,7 @@ int BlueFS::_read_random(
   while (len > 0) {
     uint64_t x_off = 0;
     auto p = h->file->fnode.seek(off, &x_off);
-    uint64_t l = std::min(p->length - x_off, len);
+    uint64_t l = std::min(p->length - x_off, static_cast<uint64_t>(len));
     dout(20) << __func__ << " read buffered 0x"
              << std::hex << x_off << "~" << l << std::dec
              << " of " << *p << dendl;

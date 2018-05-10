@@ -15,6 +15,46 @@ except ImportError:
 
 
 class Module(MgrModule):
+    OPTIONS = [
+            {
+                'name': 'hostname',
+                'default': None
+            },
+            {
+                'name': 'port',
+                'default': 8086
+            },
+            {
+                'name': 'database',
+                'default': 'ceph'
+            },
+            {
+                'name': 'username',
+                'default': None
+            },
+            {
+                'name': 'password',
+                'default': None
+            },
+            {
+                'name': 'interval',
+                'default': 30
+            },
+            {
+                'name': 'ssl',
+                'default': 'false'
+            },
+            {
+                'name': 'verify_ssl',
+                'default': 'true'
+            },
+    ]
+
+    @property
+    def config_keys(self):
+        return dict((o['name'], o.get('default', None))
+                for o in self.OPTIONS)
+
     COMMANDS = [
         {
             "cmd": "influx config-set name=key,type=CephString "
@@ -38,17 +78,6 @@ class Module(MgrModule):
             "perm": "rw"
         },
     ]
-
-    config_keys = {
-        'hostname': None,
-        'port': 8086,
-        'database': 'ceph',
-        'username': None,
-        'password': None,
-        'interval': 5,
-        'ssl': 'false',
-        'verify_ssl': 'true'
-    }
 
     def __init__(self, *args, **kwargs):
         super(Module, self).__init__(*args, **kwargs)
@@ -76,6 +105,9 @@ class Module(MgrModule):
     def get_df_stats(self):
         df = self.get("df")
         data = []
+        pool_info = {}
+
+        now = datetime.utcnow().isoformat() + 'Z'
 
         df_types = [
             'bytes_used',
@@ -91,7 +123,7 @@ class Module(MgrModule):
             'quota_objects',
             'quota_bytes'
         ]
-
+        
         for df_type in df_types:
             for pool in df['pools']:
                 point = {
@@ -102,19 +134,62 @@ class Module(MgrModule):
                         "type_instance": df_type,
                         "fsid": self.get_fsid()
                     },
-                    "time": datetime.utcnow().isoformat() + 'Z',
+                    "time": now,
                     "fields": {
                         "value": pool['stats'][df_type],
                     }
                 }
                 data.append(point)
-        return data
+                pool_info.update({str(pool['id']):pool['name']})
+        return data, pool_info
+
+    def get_pg_summary(self, pool_info):
+        time = datetime.utcnow().isoformat() + 'Z'
+        pg_sum = self.get('pg_summary')
+        osd_sum = pg_sum['by_osd']
+        pool_sum = pg_sum['by_pool']
+        data = []
+        for osd_id, stats in osd_sum.iteritems():
+            metadata = self.get_metadata('osd', "%s" % osd_id)
+            for stat in stats:
+                point_1 = {
+                    "measurement": "ceph_pg_summary_osd",
+                    "tags": {
+                        "ceph_daemon": "osd." + str(osd_id),
+                        "type_instance": stat,
+                        "host": metadata['hostname']
+                    },
+                    "time" : time, 
+                    "fields" : {
+                        "value": stats[stat]
+                    }
+                }
+                data.append(point_1)
+        for pool_id, stats in pool_sum.iteritems():
+            for stat in stats:
+                point_2 = {
+                    "measurement": "ceph_pg_summary_pool",
+                    "tags": {
+                        "pool_name" : pool_info[pool_id],
+                        "pool_id" : pool_id,
+                        "type_instance" : stat,
+                    },
+                    "time" : time,
+                    "fields": {
+                        "value" : stats[stat],
+                    }
+                }
+                data.append(point_2)
+        return data 
+
 
     def get_daemon_stats(self):
         data = []
 
+        now = datetime.utcnow().isoformat() + 'Z'
+
         for daemon, counters in self.get_all_perf_counters().iteritems():
-            svc_type, svc_id = daemon.split(".")
+            svc_type, svc_id = daemon.split(".", 1)
             metadata = self.get_metadata(svc_type, svc_id)
 
             for path, counter_info in counters.items():
@@ -131,7 +206,7 @@ class Module(MgrModule):
                         "host": metadata['hostname'],
                         "fsid": self.get_fsid()
                     },
-                    "time": datetime.utcnow().isoformat() + 'Z',
+                    "time": now,
                     "fields": {
                         "value": value
                     }
@@ -183,6 +258,7 @@ class Module(MgrModule):
         if not self.config['hostname']:
             self.log.error("No Influx server configured, please set one using: "
                            "ceph influx config-set hostname <hostname>")
+
             self.set_health_checks({
                 'MGR_INFLUX_NO_SERVER': {
                     'severity': 'warning',
@@ -207,8 +283,10 @@ class Module(MgrModule):
         # instead we'll catch the not found exception and inform the user if
         # db can not be created
         try:
-            client.write_points(self.get_df_stats(), 'ms')
+            df_stats, pools = self.get_df_stats()
+            client.write_points(df_stats, 'ms')
             client.write_points(self.get_daemon_stats(), 'ms')
+            client.write_points(self.get_pg_summary(pools))
             self.set_health_checks(dict())
         except ConnectionError as e:
             self.log.exception("Failed to connect to Influx host %s:%d",
@@ -230,6 +308,9 @@ class Module(MgrModule):
                               "'%s'", self.config['database'],
                               self.config['username'])
                 client.create_database(self.config['database'])
+                client.create_retention_policy(name='8_weeks', duration='8w',
+                                               replication='1', default=True,
+                                               database=self.config['database'])
             else:
                 self.set_health_checks({
                     'MGR_INFLUX_SEND_FAILED': {
@@ -264,7 +345,7 @@ class Module(MgrModule):
         if cmd['prefix'] == 'influx self-test':
             daemon_stats = self.get_daemon_stats()
             assert len(daemon_stats)
-            df_stats = self.get_df_stats()
+            df_stats, pools = self.get_df_stats()
 
             result = {
                 'daemon_stats': daemon_stats,

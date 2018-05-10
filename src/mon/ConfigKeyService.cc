@@ -23,6 +23,7 @@
 #include "common/errno.h"
 #include "include/stringify.h"
 
+#include "include/assert.h" // re-clobber assert()
 #define dout_subsys ceph_subsys_mon
 #undef dout_prefix
 #define dout_prefix _prefix(_dout, mon, this)
@@ -108,6 +109,17 @@ bool ConfigKeyService::store_has_prefix(const string &prefix)
   return false;
 }
 
+static bool is_binary_string(const string& s)
+{
+  for (auto c : s) {
+    // \n and \t are escaped in JSON; other control characters are not.
+    if ((c < 0x20 && c != '\n' && c != '\t') || c >= 0x7f) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void ConfigKeyService::store_dump(stringstream &ss, const string& prefix)
 {
   KeyValueDB::Iterator iter =
@@ -126,7 +138,14 @@ void ConfigKeyService::store_dump(stringstream &ss, const string& prefix)
 	iter->key().find(prefix) != 0) {
       break;
     }
-    f.dump_string(iter->key().c_str(), iter->value().to_str());
+    string s = iter->value().to_str();
+    if (is_binary_string(s)) {
+      ostringstream ss;
+      ss << "<<< binary blob of length " << s.size() << " >>>";
+      f.dump_string(iter->key().c_str(), ss.str());
+    } else {
+      f.dump_string(iter->key().c_str(), s);
+    }
     iter->next();
   }
   f.close_section();
@@ -217,8 +236,22 @@ bool ConfigKeyService::service_dispatch(MonOpRequestRef op)
          << "Use 'mon config key max entry size' to manually adjust";
       goto out;
     }
-    // we'll reply to the message once the proposal has been handled
+
+    std::string mgr_prefix = "mgr/";
+    if (key.size() >= mgr_prefix.size() &&
+        key.substr(0, mgr_prefix.size()) == mgr_prefix) {
+      // In <= mimic, we used config-key for mgr module configuration,
+      // and we bring values forward in an upgrade, but subsequent
+      // `set` operations will not be picked up.  Warn user about this.
+      ss << "WARNING: it looks like you might be trying to set a ceph-mgr "
+            "module configuration key.  Since Ceph 13.0.0 (Mimic), mgr module "
+            "configuration is done with `config set`, and new values "
+            "set using `config-key set` will be ignored.\n";
+    }
+
     ss << "set " << key;
+
+    // we'll reply to the message once the proposal has been handled
     store_put(key, data,
 	      new Monitor::C_Command(mon, op, 0, ss.str(), 0));
     // return for now; we'll put the message once it's done.

@@ -20,7 +20,7 @@
 
 static void usage()
 {
-  derr << "usage: ceph_objectstore_bench [flags]\n"
+  cout << "usage: ceph_objectstore_bench [flags]\n"
       "	 --size\n"
       "	       total size in bytes\n"
       "	 --block-size\n"
@@ -30,7 +30,7 @@ static void usage()
       "	 --threads\n"
       "	       number of threads to carry out this workload\n"
       "	 --multi-object\n"
-      "	       have each thread write to a separate object\n" << dendl;
+    "	       have each thread write to a separate object\n" << std::endl;
   generic_server_usage();
 }
 
@@ -47,7 +47,7 @@ struct byte_units {
 
 bool byte_units::parse(const std::string &val, std::string *err)
 {
-  v = strict_sistrtoll(val.c_str(), err);
+  v = strict_iecstrtoll(val.c_str(), err);
   return err->empty();
 }
 
@@ -153,6 +153,15 @@ int main(int argc, const char *argv[])
   vector<const char*> args;
   argv_to_vec(argc, argv, args);
 
+  if (args.empty()) {
+    cerr << argv[0] << ": -h or --help for usage" << std::endl;
+    exit(1);
+  }
+  if (ceph_argparse_need_usage(args)) {
+    usage();
+    exit(0);
+  }
+
   auto cct = global_init(nullptr, args, CEPH_ENTITY_TYPE_OSD,
 			 CODE_ENVIRONMENT_UTILITY,
 			 CINIT_FLAG_NO_DEFAULT_CONFIG_FILE);
@@ -167,13 +176,13 @@ int main(int argc, const char *argv[])
       std::string err;
       if (!cfg.size.parse(val, &err)) {
         derr << "error parsing size: " << err << dendl;
-        usage();
+        exit(1);
       }
     } else if (ceph_argparse_witharg(args, i, &val, "--block-size", (char*)nullptr)) {
       std::string err;
       if (!cfg.block_size.parse(val, &err)) {
         derr << "error parsing block-size: " << err << dendl;
-        usage();
+        exit(1);
       }
     } else if (ceph_argparse_witharg(args, i, &val, "--repeats", (char*)nullptr)) {
       cfg.repeats = atoi(val.c_str());
@@ -183,7 +192,7 @@ int main(int argc, const char *argv[])
       cfg.multi_object = true;
     } else {
       derr << "Error: can't understand argument: " << *i << "\n" << dendl;
-      usage();
+      exit(1);
     }
   }
 

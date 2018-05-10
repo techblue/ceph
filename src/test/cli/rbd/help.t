@@ -143,8 +143,9 @@
     --io-type arg        IO type (read , write, or readwrite(rw))
   
   rbd help children
-  usage: rbd children [--pool <pool>] [--image <image>] [--snap <snap>] [--all] 
-                      [--format <format>] [--pretty-format] 
+  usage: rbd children [--pool <pool>] [--image <image>] [--snap <snap>] 
+                      [--snap-id <snap-id>] [--all] [--format <format>] 
+                      [--pretty-format] 
                       <snap-spec> 
   
   Display children of snapshot.
@@ -157,6 +158,7 @@
     -p [ --pool ] arg    pool name
     --image arg          image name
     --snap arg           snapshot name
+    --snap-id arg        snapshot id
     -a [ --all ]         list all children of snapshot (include trash)
     --format arg         output format (plain, json, or xml) [default: plain]
     --pretty-format      pretty formatting (json and xml)
@@ -264,7 +266,8 @@
                     [--stripe-count <stripe-count>] [--data-pool <data-pool>] 
                     [--journal-splay-width <journal-splay-width>] 
                     [--journal-object-size <journal-object-size>] 
-                    [--journal-pool <journal-pool>] --size <size> 
+                    [--journal-pool <journal-pool>] 
+                    [--thick-provision] --size <size> [--no-progress] 
                     <image-spec> 
   
   Create an empty image.
@@ -291,7 +294,9 @@
     --journal-splay-width arg number of active journal objects
     --journal-object-size arg size of journal objects
     --journal-pool arg        pool for journal objects
+    --thick-provision         fully allocate storage and zero image
     -s [ --size ] arg         image size (in M/G/T) [default: M]
+    --no-progress             disable progress output
   
   Image Features:
     (*) supports enabling/disabling on existing images
@@ -420,7 +425,7 @@
   rbd help disk-usage
   usage: rbd disk-usage [--pool <pool>] [--image <image>] [--snap <snap>] 
                         [--format <format>] [--pretty-format] 
-                        [--from-snap <from-snap>] 
+                        [--from-snap <from-snap>] [--exact] 
                         <image-or-snap-spec> 
   
   Show disk usage stats for pool, image or snapshot.
@@ -436,6 +441,7 @@
     --format arg          output format (plain, json, or xml) [default: plain]
     --pretty-format       pretty formatting (json and xml)
     --from-snap arg       snapshot starting point
+    --exact               compute exact disk usage (slow)
   
   rbd help export
   usage: rbd export [--pool <pool>] [--image <image>] [--snap <snap>] 

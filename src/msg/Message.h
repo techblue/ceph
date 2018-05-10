@@ -125,6 +125,9 @@
 #define MSG_OSD_REP_SCRUBMAP    117
 #define MSG_OSD_PG_RECOVERY_DELETE 118
 #define MSG_OSD_PG_RECOVERY_DELETE_REPLY 119
+#define MSG_OSD_PG_CREATE2      120
+#define MSG_OSD_SCRUB2          121
+
 
 // *** MDS ***
 
@@ -150,7 +153,7 @@
 #define MSG_MDS_FINDINOREPLY       0x20e
 #define MSG_MDS_OPENINO            0x20f
 #define MSG_MDS_OPENINOREPLY       0x210
-
+#define MSG_MDS_SNAPUPDATE         0x211
 #define MSG_MDS_LOCK               0x300
 #define MSG_MDS_INODEFILECAPS      0x301
 
@@ -208,6 +211,8 @@
 // *** cephmgr -> ceph-mon
 #define MSG_MON_MGR_REPORT        0x706
 #define MSG_SERVICE_MAP           0x707
+
+#define MSG_MGR_CLOSE             0x708
 
 // ======================================================
 

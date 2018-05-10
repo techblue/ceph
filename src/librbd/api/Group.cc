@@ -100,8 +100,8 @@ int group_snap_list(librados::IoCtx& group_ioctx, const char *group_name,
 }
 
 std::string calc_ind_image_snap_name(uint64_t pool_id,
-				     std::string group_id,
-				     std::string snap_id)
+				     const std::string &group_id,
+				     const std::string &snap_id)
 {
   std::stringstream ind_snap_name_stream;
   ind_snap_name_stream << ".group." << std::hex << pool_id << "_"
@@ -398,6 +398,10 @@ int Group<I>::remove(librados::IoCtx& io_ctx, const char *group_name)
 
   std::vector<cls::rbd::GroupSnapshot> snaps;
   r = group_snap_list(io_ctx, group_name, &snaps);
+  if (r < 0 && r != -ENOENT) {
+    lderr(cct) << "error listing group snapshots" << dendl;
+    return r;
+  }
 
   for (auto &snap : snaps) {
     r = group_snap_remove_by_record(io_ctx, snap, group_id, group_header_oid);

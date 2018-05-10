@@ -336,4 +336,13 @@
 /* Defined if boost::context is available */
 #cmakedefine HAVE_BOOST_CONTEXT
 
+/* Defined if OpenSSL is available for the rgw beast frontend */
+#cmakedefine WITH_RADOSGW_BEAST_OPENSSL
+
+/* Defined if std::map::merge() is supported */
+#cmakedefine HAVE_STDLIB_MAP_SPLICING
+
+/* Defined if Intel QAT compress/decompress is supported */
+#cmakedefine HAVE_QATZIP
+
 #endif /* CONFIG_H */

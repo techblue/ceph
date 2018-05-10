@@ -377,6 +377,15 @@ TEST_F(TestLibRBD, GetId)
     ASSERT_EQ(-ERANGE, rbd_get_id(image, id, 0));
     ASSERT_EQ(0, rbd_get_id(image, id, sizeof(id)));
     ASSERT_LT(0U, strlen(id));
+
+    ASSERT_EQ(0, rbd_close(image));
+    ASSERT_EQ(0, rbd_open_by_id(ioctx, id, &image, NULL));
+    size_t name_len = 0;
+    ASSERT_EQ(-ERANGE, rbd_get_name(image, NULL, &name_len));
+    ASSERT_EQ(name_len, name.size() + 1);
+    char image_name[name_len];
+    ASSERT_EQ(0, rbd_get_name(image, image_name, &name_len));
+    ASSERT_STREQ(name.c_str(), image_name);
   }
 
   ASSERT_EQ(0, rbd_close(image));
@@ -402,6 +411,12 @@ TEST_F(TestLibRBD, GetIdPP)
   } else {
     ASSERT_EQ(0, image.get_id(&id));
     ASSERT_LT(0U, id.size());
+
+    ASSERT_EQ(0, image.close());
+    ASSERT_EQ(0, rbd.open_by_id(ioctx, image, id.c_str(), NULL));
+    std::string image_name;
+    ASSERT_EQ(0, image.get_name(&image_name));
+    ASSERT_EQ(name, image_name);
   }
 }
 
@@ -697,7 +712,7 @@ TEST_F(TestLibRBD, UpdateWatchAndResize)
       Watcher *watcher = static_cast<Watcher *>(arg);
       watcher->handle_notify();
     }
-    Watcher(rbd_image_t &image) : m_image(image) {}
+    explicit Watcher(rbd_image_t &image) : m_image(image) {}
     void handle_notify() {
       rbd_image_info_t info;
       ASSERT_EQ(0, rbd_stat(m_image, &info, sizeof(info)));
@@ -743,7 +758,7 @@ TEST_F(TestLibRBD, UpdateWatchAndResizePP)
     std::string name = get_temp_image_name();
     uint64_t size = 2 << 20;
     struct Watcher : public librbd::UpdateWatchCtx {
-      Watcher(librbd::Image &image) : m_image(image) {
+      explicit Watcher(librbd::Image &image) : m_image(image) {
       }
       void handle_notify() override {
         librbd::image_info_t info;
@@ -6588,6 +6603,29 @@ TEST_F(TestLibRBD, TestListWatchers) {
   ASSERT_EQ(0, image.list_watchers(watchers));
   ASSERT_EQ(1, watchers.size());
   ASSERT_EQ(0, image.close());
+}
+
+TEST_F(TestLibRBD, TestSetSnapById) {
+  librados::IoCtx ioctx;
+  ASSERT_EQ(0, _rados.ioctx_create(m_pool_name.c_str(), ioctx));
+
+  librbd::RBD rbd;
+  std::string name = get_temp_image_name();
+
+  uint64_t size = 1 << 18;
+  int order = 12;
+  ASSERT_EQ(0, create_image_pp(rbd, ioctx, name.c_str(), size, &order));
+
+  librbd::Image image;
+  ASSERT_EQ(0, rbd.open(ioctx, image, name.c_str(), nullptr));
+  ASSERT_EQ(0, image.snap_create("snap"));
+
+  vector<librbd::snap_info_t> snaps;
+  ASSERT_EQ(0, image.snap_list(snaps));
+  ASSERT_EQ(1U, snaps.size());
+
+  ASSERT_EQ(0, image.snap_set_by_id(snaps[0].id));
+  ASSERT_EQ(0, image.snap_set_by_id(CEPH_NOSNAP));
 }
 
 // poorman's assert()

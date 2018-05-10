@@ -46,6 +46,8 @@
 // so that we don't try to fragment it.
 #define MDS_INO_CEPH              2
 
+#define MDS_INO_GLOBAL_SNAPREALM  3
+
 #define MDS_INO_MDSDIR_OFFSET     (1*MAX_MDS)
 #define MDS_INO_STRAY_OFFSET      (6*MAX_MDS)
 
@@ -63,7 +65,7 @@
 #define MDS_INO_IS_STRAY(i)  ((i) >= MDS_INO_STRAY_OFFSET  && (i) < (MDS_INO_STRAY_OFFSET+(MAX_MDS*NUM_STRAY)))
 #define MDS_INO_IS_MDSDIR(i) ((i) >= MDS_INO_MDSDIR_OFFSET && (i) < (MDS_INO_MDSDIR_OFFSET+MAX_MDS))
 #define MDS_INO_MDSDIR_OWNER(i) (signed ((unsigned (i)) - MDS_INO_MDSDIR_OFFSET))
-#define MDS_INO_IS_BASE(i)   (MDS_INO_ROOT == (i) || MDS_INO_IS_MDSDIR(i))
+#define MDS_INO_IS_BASE(i)   ((i) == MDS_INO_ROOT || (i) == MDS_INO_GLOBAL_SNAPREALM || MDS_INO_IS_MDSDIR(i))
 #define MDS_INO_STRAY_OWNER(i) (signed (((unsigned (i)) - MDS_INO_STRAY_OFFSET) / NUM_STRAY))
 #define MDS_INO_STRAY_INDEX(i) (((unsigned (i)) - MDS_INO_STRAY_OFFSET) % NUM_STRAY)
 
@@ -532,7 +534,6 @@ struct inode_t {
   {
     clear_layout();
     memset(&dir_layout, 0, sizeof(dir_layout));
-    memset(&quota, 0, sizeof(quota));
   }
 
   // file type
@@ -1500,7 +1501,7 @@ public:
       2*vec[META_POP_FETCH].get(now, rate) +
       4*vec[META_POP_STORE].get(now, rate);
   }
-  double meta_load() {
+  double meta_load() const {
     return 
       1*vec[META_POP_IRD].get_last() + 
       2*vec[META_POP_IWR].get_last() +
@@ -1533,14 +1534,10 @@ inline void decode(dirfrag_load_vec_t& c, bufferlist::iterator &p) {
   c.decode(sample, p);
 }
 
-inline std::ostream& operator<<(std::ostream& out, dirfrag_load_vec_t& dl)
+inline std::ostream& operator<<(std::ostream& out, const dirfrag_load_vec_t& dl)
 {
-  // ugliness!
-  utime_t now = ceph_clock_now();
-  DecayRate rate(g_conf->mds_decay_halflife);
-  return out << "[" << dl.vec[0].get(now, rate) << "," << dl.vec[1].get(now, rate) 
-	     << " " << dl.meta_load(now, rate)
-	     << "]";
+  return out << "[" << dl.vec[0].get_last() << "," << dl.vec[1].get_last()
+	     << " " << dl.meta_load() << "]";
 }
 
 
@@ -1584,7 +1581,7 @@ inline void decode(mds_load_t &c, bufferlist::iterator &p) {
   c.decode(sample, p);
 }
 
-inline std::ostream& operator<<( std::ostream& out, mds_load_t& load )
+inline std::ostream& operator<<(std::ostream& out, const mds_load_t& load)
 {
   return out << "mdsload<" << load.auth << "/" << load.all
              << ", req " << load.req_rate 

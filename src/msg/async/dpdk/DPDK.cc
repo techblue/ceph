@@ -19,19 +19,6 @@
 /*
  * Copyright (C) 2014 Cloudius Systems, Ltd.
  */
-/*
- * Ceph - scalable distributed file system
- *
- * Copyright (C) 2015 XSky <haomai@xsky.com>
- *
- * Author: Haomai Wang <haomaiwang@gmail.com>
- *
- * This is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License version 2.1, as published by the Free Software
- * Foundation.  See file COPYING.
- *
- */
 
 #include <atomic>
 #include <vector>
@@ -575,7 +562,7 @@ int DPDKDevice::check_port_link_status()
         ldout(cct, 20) << __func__ << " not ready, continue to wait." << dendl;
         usleep(sleep_time);
       } else {
-        lderr(cct) << __func__ << "done port " << _port_idx << " link down" << dendl;
+        lderr(cct) << __func__ << " done port " << _port_idx << " link down" << dendl;
         return -1;
       }
     }

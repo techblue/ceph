@@ -1,11 +1,13 @@
 cmake_minimum_required(VERSION 2.8.12)
 
 project(ceph CXX C ASM)
-set(VERSION 13.0.1)
+set(VERSION 13.0.2)
 
+if(POLICY CMP0028)
+  cmake_policy(SET CMP0028 NEW)
+endif()
 if(POLICY CMP0046)
-  # Tweak policies (this one disables "missing" dependency warning)
-  cmake_policy(SET CMP0046 OLD)
+  cmake_policy(SET CMP0046 NEW)
 endif()
 if(POLICY CMP0054)
   cmake_policy(SET CMP0054 NEW)
@@ -17,13 +19,7 @@ if(POLICY CMP0065)
   cmake_policy(SET CMP0065 NEW)
 endif()
 if(POLICY CMP0051)
-  # cmake 3.1 and higher include generator expressions in SOURCES property.
-  # in BuildBoost.cmake, get_target_property(<var> <target> SOURCES) is used
-  # to retrieve the source files of a target. in that case, we are only
-  # interested in the *source* files. and i don't want to bother stripping off
-  # the TARGET_OBJECTS elements from the returned SOURCES. so let's stick with
-  # the old behavior now.
-  cmake_policy(SET CMP0051 OLD)
+  cmake_policy(SET CMP0051 NEW)
 endif()
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/modules/")
 
@@ -258,6 +254,12 @@ endif()
 
 option(WITH_BLUEFS "libbluefs library" OFF)
 
+option(WITH_QATZIP "Enable QATZIP" OFF)
+if(WITH_QATZIP)
+  find_package(qatzip REQUIRED)
+  set(HAVE_QATZIP ${QATZIP_FOUND})
+endif(WITH_QATZIP)
+
 # needs mds and? XXX
 option(WITH_LIBCEPHFS "libcephfs client library" ON)
 
@@ -298,7 +300,7 @@ if(WITH_BROTLI)
   set(HAVE_BROTLI TRUE)
 endif()
 
-option(WITH_LZ4 "LZ4 compression support" OFF)
+option(WITH_LZ4 "LZ4 compression support" ON)
 if(WITH_LZ4)
   find_package(LZ4 1.7 REQUIRED)
   set(HAVE_LZ4 ${LZ4_FOUND})
@@ -384,6 +386,8 @@ endif()
 option(WITH_RADOSGW "Rados Gateway is enabled" ON)
 option(WITH_RADOSGW_FCGI_FRONTEND "Rados Gateway's FCGI frontend is enabled" OFF)
 option(WITH_RADOSGW_BEAST_FRONTEND "Rados Gateway's Beast frontend is enabled" ON)
+option(WITH_RADOSGW_BEAST_OPENSSL "Rados Gateway's Beast frontend uses OpenSSL" ON)
+
 if(WITH_RADOSGW)
   find_package(EXPAT REQUIRED)
   if(WITH_RADOSGW_FCGI_FRONTEND)
@@ -393,10 +397,8 @@ if(WITH_RADOSGW)
     message(WARNING "disabling WITH_RADOSGW_BEAST_FRONTEND, which depends on WITH_BOOST_CONTEXT")
     set(WITH_RADOSGW_BEAST_FRONTEND OFF)
   endif()
-endif(WITH_RADOSGW)
+  find_package(liboath REQUIRED)
 
-
-if (WITH_RADOSGW)
 # https://curl.haxx.se/docs/install.html mentions the
 # configure flags for various ssl backends
   execute_process(
@@ -409,7 +411,13 @@ if (WITH_RADOSGW)
   if (CURL_CONFIG_ERRORS)
     message(WARNING "unable to run curl-config; rgw cannot make ssl requests to external systems reliably")
   endif()
-  find_package(OpenSSL)
+
+  if (WITH_RADOSGW_BEAST_FRONTEND AND WITH_RADOSGW_BEAST_OPENSSL)
+    find_package(OpenSSL REQUIRED)
+  else()
+    find_package(OpenSSL)
+  endif()
+
   if (OPENSSL_FOUND)
     if (NOT NO_CURL_SSL_LINK)
       message(STATUS "libcurl is linked with openssl: explicitly setting locks")
@@ -582,7 +590,7 @@ option(WITH_SYSTEM_BOOST "require and build with system Boost" OFF)
 
 # Boost::thread depends on Boost::atomic, so list it explicitly.
 set(BOOST_COMPONENTS
-  atomic thread system regex random program_options date_time iostreams)
+  atomic chrono thread system regex random program_options date_time iostreams)
 set(BOOST_HEADER_COMPONENTS container)
 
 if(WITH_MGR)
@@ -613,7 +621,7 @@ endif()
 set(Boost_USE_MULTITHREADED ON)
 
 # dashboard angular2 frontend
-option(WITH_MGR_DASHBOARD_V2_FRONTEND "Build the mgr/dashboard_v2 frontend using `npm`" ON)
+option(WITH_MGR_DASHBOARD_FRONTEND "Build the mgr/dashboard frontend using `npm`" ON)
 
 include_directories(SYSTEM ${PROJECT_BINARY_DIR}/include)
 

@@ -829,20 +829,6 @@ TEST(pg_missing_t, add_next_event)
     EXPECT_EQ(1U, missing.get_rmissing().size());
   }
 
-  // obsolete (BACKLOG)
-  {
-    pg_missing_t missing;
-    pg_log_entry_t e = sample_e;
-
-    e.op = pg_log_entry_t::BACKLOG;
-    EXPECT_TRUE(e.is_backlog());
-    EXPECT_TRUE(e.object_is_indexed());
-    EXPECT_FALSE(e.reqid_is_indexed());
-    EXPECT_FALSE(missing.is_missing(oid));
-    PrCtl unset_dumpable;
-    EXPECT_DEATH(missing.add_next_event(e), "");
-  }
-
   // adding a DELETE matching an existing event
   {
     pg_missing_t missing;
@@ -1322,7 +1308,7 @@ TEST(pool_opts_t, deep_scrub_interval) {
 
 struct RequiredPredicate : IsPGRecoverablePredicate {
   unsigned required_size;
-  RequiredPredicate(unsigned required_size) : required_size(required_size) {}
+  explicit RequiredPredicate(unsigned required_size) : required_size(required_size) {}
   bool operator()(const set<pg_shard_t> &have) const override {
     return have.size() >= required_size;
   }
@@ -1331,8 +1317,8 @@ struct RequiredPredicate : IsPGRecoverablePredicate {
 using namespace std;
 struct MapPredicate {
   map<int, pair<PastIntervals::osd_state_t, epoch_t>> states;
-  MapPredicate(
-    vector<pair<int, pair<PastIntervals::osd_state_t, epoch_t>>> _states)
+  explicit MapPredicate(
+    const vector<pair<int, pair<PastIntervals::osd_state_t, epoch_t>>> &_states)
    : states(_states.begin(), _states.end()) {}
   PastIntervals::osd_state_t operator()(epoch_t start, int osd, epoch_t *lost_at) {
     auto val = states.at(osd);

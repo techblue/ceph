@@ -240,6 +240,53 @@ void MDSRank::hit_export_target(utime_t now, mds_rank_t rank, double amount)
   em.first->second.hit(now, amount);
 }
 
+class C_MDS_MonCommand : public MDSInternalContext {
+  std::string cmd;
+public:
+  std::string outs;
+  C_MDS_MonCommand(MDSRank *m, std::string_view c)
+    : MDSInternalContext(m), cmd(c) {}
+  void finish(int r) override {
+    mds->_mon_command_finish(r, cmd, outs);
+  }
+};
+
+void MDSRank::_mon_command_finish(int r, std::string_view cmd, std::string_view outs)
+{
+  if (r < 0) {
+    dout(0) << __func__ << ": mon command " << cmd << " failed with errno " << r
+	    << " (" << outs << ")" << dendl;
+  } else {
+    dout(1) << __func__ << ": mon command " << cmd << " succeed" << dendl;
+  }
+}
+
+void MDSRank::set_mdsmap_multimds_snaps_allowed()
+{
+  static bool already_sent = false;
+  if (already_sent)
+    return;
+
+  stringstream ss;
+  ss << "{\"prefix\":\"fs set\", \"fs_name\":\"" <<  mdsmap->get_fs_name() << "\", ";
+  ss << "\"var\":\"allow_multimds_snaps\", \"val\":\"true\", ";
+  ss << "\"confirm\":\"--yes-i-am-really-a-mds\"}";
+  std::vector<std::string> cmd = {ss.str()};
+
+  dout(0) << __func__ << ": sending mon command: " << cmd[0] << dendl;
+
+  C_MDS_MonCommand *fin = new C_MDS_MonCommand(this, cmd[0]);
+  monc->start_mon_command(cmd, {}, nullptr, &fin->outs, new C_IO_Wrapper(this, fin));
+
+  already_sent = true;
+}
+
+void MDSRank::mark_base_recursively_scrubbed(inodeno_t ino)
+{
+  if (mdsmap->get_tableserver() == whoami)
+    snapserver->mark_base_recursively_scrubbed(ino);
+}
+
 void MDSRankDispatcher::tick()
 {
   heartbeat_reset();
@@ -266,11 +313,7 @@ void MDSRankDispatcher::tick()
   }
 
   // log
-  mds_load_t load = balancer->get_load(ceph_clock_now());
-
   if (logger) {
-    logger->set(l_mds_load_cent, 100 * load.mds_load());
-    logger->set(l_mds_dispatch_queue_len, messenger->get_dispatch_queue_len());
     logger->set(l_mds_subtrees, mdcache->num_subtrees());
 
     mdcache->log_stat();
@@ -289,8 +332,16 @@ void MDSRankDispatcher::tick()
     balancer->tick();
     mdcache->find_stale_fragment_freeze();
     mdcache->migrator->find_stale_export_freeze();
-    if (snapserver)
+
+    if (mdsmap->get_tableserver() == whoami) {
       snapserver->check_osd_map(false);
+      // Filesystem was created by pre-mimic mds. Allow multi-active mds after
+      // all old snapshots are deleted.
+      if (!mdsmap->allows_multimds_snaps() &&
+	  snapserver->can_allow_multimds_snaps()) {
+	set_mdsmap_multimds_snaps_allowed();
+      }
+    }
   }
 
   if (is_active() || is_stopping()) {
@@ -639,12 +690,10 @@ bool MDSRank::_dispatch(Message *m, bool new_msg)
     if (!dir->get_parent_dir()) continue;    // must be linked.
     if (!dir->is_auth()) continue;           // must be auth.
     frag_t fg = dir->get_frag();
-    if (mdsmap->allows_dirfrags()) {
-      if ((fg == frag_t() || (rand() % (1 << fg.bits()) == 0))) {
-        mdcache->split_dir(dir, 1);
-      } else {
-        balancer->queue_merge(dir);
-      }
+    if ((fg == frag_t() || (rand() % (1 << fg.bits()) == 0))) {
+      mdcache->split_dir(dir, 1);
+    } else {
+      balancer->queue_merge(dir);
     }
   }
 
@@ -1076,6 +1125,8 @@ void MDSRank::boot_start(BootStep step, int r)
 	} else if (!standby_replaying) {
 	  dout(2) << "boot_start " << step << ": opening purge queue (async)" << dendl;
 	  purge_queue.open(NULL);
+	  dout(2) << "boot_start " << step << ": loading open file table (async)" << dendl;
+	  mdcache->open_file_table.load(nullptr);
 	}
 
         if (mdsmap->get_tableserver() == whoami) {
@@ -1094,15 +1145,21 @@ void MDSRank::boot_start(BootStep step, int r)
         MDSGatherBuilder gather(g_ceph_context,
             new C_MDS_BootStart(this, MDS_BOOT_PREPARE_LOG));
 
-        mdcache->open_mydir_inode(gather.new_sub());
+	if (is_starting()) {
+	  // load mydir frag for the first log segment (creating subtree map)
+	  mdcache->open_mydir_frag(gather.new_sub());
+	} else {
+	  mdcache->open_mydir_inode(gather.new_sub());
+	}
 
-        if (is_starting() ||
-            whoami == mdsmap->get_root()) {  // load root inode off disk if we are auth
-          mdcache->open_root_inode(gather.new_sub());
-        } else {
-          // replay.  make up fake root inode to start with
-          (void)mdcache->create_root_inode();
-        }
+	mdcache->create_global_snaprealm();
+
+	if (whoami == mdsmap->get_root()) {  // load root inode off disk if we are auth
+	  mdcache->open_root_inode(gather.new_sub());
+	} else if (is_any_replay()) {
+	  // replay.  make up fake root inode to start with
+	  mdcache->create_root_inode();
+	}
         gather.activate();
       }
       break;
@@ -1140,7 +1197,7 @@ void MDSRank::boot_start(BootStep step, int r)
 void MDSRank::validate_sessions()
 {
   assert(mds_lock.is_locked_by_me());
-  std::vector<Session*> victims;
+  bool valid = true;
 
   // Identify any sessions which have state inconsistent with other,
   // after they have been loaded from rados during startup.
@@ -1150,19 +1207,15 @@ void MDSRank::validate_sessions()
     Session *session = i.second;
     interval_set<inodeno_t> badones;
     if (inotable->intersects_free(session->info.prealloc_inos, &badones)) {
-      clog->error() << "Client session loaded with invalid preallocated "
-                          "inodes, evicting session " << *session;
-
-      // Make the session consistent with inotable so that it can
-      // be cleanly torn down
-      session->info.prealloc_inos.subtract(badones);
-
-      victims.push_back(session);
+      clog->error() << "client " << *session
+		    << "loaded with preallocated inodes that are inconsistent with inotable";
+      valid = false;
     }
   }
 
-  for (const auto &session: victims) {
-    server->kill_session(session, nullptr);
+  if (!valid) {
+    damaged();
+    assert(valid);
   }
 }
 
@@ -1172,16 +1225,10 @@ void MDSRank::starting_done()
   assert(is_starting());
   request_state(MDSMap::STATE_ACTIVE);
 
-  mdcache->open_root();
+  mdlog->start_new_segment();
 
-  if (mdcache->is_open()) {
-    mdlog->start_new_segment();
-  } else {
-    mdcache->wait_for_open(new MDSInternalContextWrapper(this,
-			   new FunctionContext([this] (int r) {
-			       mdlog->start_new_segment();
-			   })));
-  }
+  // sync snaptable cache
+  snapclient->sync(new C_MDSInternalNoop);
 }
 
 
@@ -1275,8 +1322,10 @@ void MDSRank::standby_replay_restart()
           this,
 	  mdlog->get_journaler()->get_read_pos()));
 
-      dout(1) << " opening purge queue (async)" << dendl;
+      dout(1) << " opening purge_queue (async)" << dendl;
       purge_queue.open(NULL);
+      dout(1) << " opening open_file_table (async)" << dendl;
+      mdcache->open_file_table.load(nullptr);
     } else {
       dout(1) << " waiting for osdmap " << mdsmap->get_last_failure_osd_epoch()
               << " (which blacklists prior instance)" << dendl;
@@ -1318,6 +1367,12 @@ void MDSRank::replay_done()
   mdlog->get_journaler()->set_writeable();
   mdlog->get_journaler()->trim_tail();
 
+  if (mdsmap->get_tableserver() == whoami &&
+      snapserver->upgrade_format()) {
+    dout(1) << "upgrading snaptable format" << dendl;
+    snapserver->save(new C_MDSInternalNoop);
+  }
+
   if (g_conf->mds_wipe_sessions) {
     dout(1) << "wiping out client sessions" << dendl;
     sessionmap.wipe();
@@ -1339,6 +1394,8 @@ void MDSRank::replay_done()
       mdsmap->get_num_failed_mds() == 0) { // just me!
     dout(2) << "i am alone, moving to state reconnect" << dendl;
     request_state(MDSMap::STATE_RECONNECT);
+    // sync snaptable cache
+    snapclient->sync(new C_MDSInternalNoop);
   } else {
     dout(2) << "i am not alone, moving to state resolve" << dendl;
     request_state(MDSMap::STATE_RESOLVE);
@@ -1351,7 +1408,6 @@ void MDSRank::reopen_log()
   mdcache->rollback_uncommitted_fragments();
 }
 
-
 void MDSRank::resolve_start()
 {
   dout(1) << "resolve_start" << dendl;
@@ -1361,10 +1417,13 @@ void MDSRank::resolve_start()
   mdcache->resolve_start(new C_MDS_VoidFn(this, &MDSRank::resolve_done));
   finish_contexts(g_ceph_context, waiting_for_resolve);
 }
+
 void MDSRank::resolve_done()
 {
   dout(1) << "resolve_done" << dendl;
   request_state(MDSMap::STATE_RECONNECT);
+  // sync snaptable cache
+  snapclient->sync(new C_MDSInternalNoop);
 }
 
 void MDSRank::reconnect_start()
@@ -1466,7 +1525,8 @@ void MDSRank::active_start()
 {
   dout(1) << "active_start" << dendl;
 
-  if (last_state == MDSMap::STATE_CREATING) {
+  if (last_state == MDSMap::STATE_CREATING ||
+      last_state == MDSMap::STATE_STARTING) {
     mdcache->open_root();
   }
 
@@ -1486,13 +1546,6 @@ void MDSRank::recovery_done(int oldstate)
   dout(1) << "recovery_done -- successful recovery!" << dendl;
   assert(is_clientreplay() || is_active());
 
-  // kick snaptable (resent AGREEs)
-  if (mdsmap->get_tableserver() == whoami) {
-    set<mds_rank_t> active;
-    mdsmap->get_mds_set_lower_bound(active, MDSMap::STATE_CLIENTREPLAY);
-    snapserver->finish_recovery(active);
-  }
-
   if (oldstate == MDSMap::STATE_CREATING)
     return;
 
@@ -1509,6 +1562,8 @@ void MDSRank::creating_done()
 {
   dout(1)<< "creating_done" << dendl;
   request_state(MDSMap::STATE_ACTIVE);
+  // sync snaptable cache
+  snapclient->sync(new C_MDSInternalNoop);
 }
 
 void MDSRank::boot_create()
@@ -1519,7 +1574,6 @@ void MDSRank::boot_create()
 
   mdcache->init_layouts();
 
-  snapserver->set_rank(whoami);
   inotable->set_rank(whoami);
   sessionmap.set_rank(whoami);
 
@@ -1538,6 +1592,9 @@ void MDSRank::boot_create()
   dout(3) << "boot_create creating mydir hierarchy" << dendl;
   mdcache->create_mydir_hierarchy(fin.get());
 
+  dout(3) << "boot_create creating global snaprealm" << dendl;
+  mdcache->create_global_snaprealm();
+
   // fixme: fake out inotable (reset, pretend loaded)
   dout(10) << "boot_create creating fresh inotable table" << dendl;
   inotable->reset();
@@ -1552,6 +1609,7 @@ void MDSRank::boot_create()
   // initialize tables
   if (mdsmap->get_tableserver() == whoami) {
     dout(10) << "boot_create creating fresh snaptable" << dendl;
+    snapserver->set_rank(whoami);
     snapserver->reset();
     snapserver->save(fin.new_sub());
   }
@@ -1573,9 +1631,27 @@ void MDSRank::stopping_start()
   dout(2) << "stopping_start" << dendl;
 
   if (mdsmap->get_num_in_mds() == 1 && !sessionmap.empty()) {
-    // we're the only mds up!
-    dout(0) << "we are the last MDS, and have mounted clients: we cannot flush our journal.  suicide!" << dendl;
-    suicide();
+    std::vector<Session*> victims;
+    const auto sessions = sessionmap.get_sessions();
+    for (const auto p : sessions)  {
+      if (!p.first.is_client()) {
+        continue;
+      }
+
+      Session *s = p.second;
+      victims.push_back(s);
+    }
+
+    dout(20) << __func__ << " matched " << victims.size() << " sessions" << dendl;
+    assert(!victims.empty());
+
+    C_GatherBuilder gather(g_ceph_context, new C_MDSInternalNoop);
+    for (const auto &s : victims) {
+      std::stringstream ss;
+      evict_client(s->get_client().v, false,
+                   g_conf->mds_session_blacklist_on_evict, ss, gather.new_sub());
+    }
+    gather.activate();
   }
 
   mdcache->shutdown_start();
@@ -1687,6 +1763,26 @@ void MDSRankDispatcher::handle_mds_map(
   // is someone else newly resolving?
   if (is_resolve() || is_reconnect() || is_rejoin() ||
       is_clientreplay() || is_active() || is_stopping()) {
+
+    // recover snaptable
+    if (mdsmap->get_tableserver() == whoami) {
+      if (oldstate < MDSMap::STATE_RESOLVE) {
+	set<mds_rank_t> s;
+	mdsmap->get_mds_set_lower_bound(s, MDSMap::STATE_RESOLVE);
+	snapserver->finish_recovery(s);
+      } else {
+	set<mds_rank_t> old_set, new_set;
+	oldmap->get_mds_set_lower_bound(old_set, MDSMap::STATE_RESOLVE);
+	mdsmap->get_mds_set_lower_bound(new_set, MDSMap::STATE_RESOLVE);
+	for (auto p : new_set) {
+	  if (p != whoami &&            // not me
+	      old_set.count(p) == 0) {  // newly so?
+	    snapserver->handle_mds_recovery(p);
+	  }
+	}
+      }
+    }
+
     if (!oldmap->is_resolving() && mdsmap->is_resolving()) {
       set<mds_rank_t> resolve;
       mdsmap->get_mds_set(resolve, MDSMap::STATE_RESOLVE);
@@ -1698,7 +1794,7 @@ void MDSRankDispatcher::handle_mds_map(
 
   // REJOIN
   // is everybody finally rejoining?
-  if (is_starting() || is_rejoin() || is_clientreplay() || is_active() || is_stopping()) {
+  if (is_rejoin() || is_clientreplay() || is_active() || is_stopping()) {
     // did we start?
     if (!oldmap->is_rejoining() && mdsmap->is_rejoining())
       rejoin_joint_start();
@@ -1779,8 +1875,11 @@ void MDSRankDispatcher::handle_mds_map(
     oldmap->get_stopped_mds_set(oldstopped);
     mdsmap->get_stopped_mds_set(stopped);
     for (set<mds_rank_t>::iterator p = stopped.begin(); p != stopped.end(); ++p)
-      if (oldstopped.count(*p) == 0)      // newly so?
+      if (oldstopped.count(*p) == 0) {     // newly so?
 	mdcache->migrator->handle_mds_failure_or_stop(*p);
+	if (mdsmap->get_tableserver() == whoami)
+	  snapserver->handle_mds_failure_or_stop(*p);
+      }
   }
 
   {
@@ -1831,10 +1930,6 @@ void MDSRank::handle_mds_recovery(mds_rank_t who)
 
   mdcache->handle_mds_recovery(who);
 
-  if (mdsmap->get_tableserver() == whoami) {
-    snapserver->handle_mds_recovery(who);
-  }
-
   queue_waiters(waiting_for_active_peer[who]);
   waiting_for_active_peer.erase(who);
 }
@@ -1848,6 +1943,9 @@ void MDSRank::handle_mds_failure(mds_rank_t who)
   dout(5) << "handle_mds_failure mds." << who << dendl;
 
   mdcache->handle_mds_failure(who);
+
+  if (mdsmap->get_tableserver() == whoami)
+    snapserver->handle_mds_failure_or_stop(who);
 
   snapclient->handle_mds_failure(who);
 }
@@ -1980,6 +2078,23 @@ bool MDSRankDispatcher::handle_asok_command(std::string_view command,
     if (r != 0) {
       ss << "Failed to dump loads: " << cpp_strerror(r);
       f->reset();
+    }
+  } else if (command == "dump snaps") {
+    Mutex::Locker l(mds_lock);
+    string server;
+    cmd_getval(g_ceph_context, cmdmap, "server", server);
+    if (server == "--server") {
+      if (mdsmap->get_tableserver() == whoami) {
+	snapserver->dump(f);
+      } else {
+	ss << "Not snapserver";
+      }
+    } else {
+      int r = snapclient->dump_cache(f);
+      if (r != 0) {
+	ss << "Failed to dump snapclient: " << cpp_strerror(r);
+	f->reset();
+      }
     }
   } else if (command == "force_readonly") {
     Mutex::Locker l(mds_lock);
@@ -2421,11 +2536,6 @@ bool MDSRank::command_dirfrag_split(
     std::ostream &ss)
 {
   Mutex::Locker l(mds_lock);
-  if (!mdsmap->allows_dirfrags()) {
-    ss << "dirfrags are disallowed by the mds map!";
-    return false;
-  }
-
   int64_t by = 0;
   if (!cmd_getval(g_ceph_context, cmdmap, "bits", by)) {
     ss << "missing bits argument";
@@ -2635,6 +2745,12 @@ void MDSRank::create_logger()
     mds_plb.add_u64_counter(
       l_mds_imported_inodes, "imported_inodes", "Imported inodes", "imi",
       PerfCountersBuilder::PRIO_INTERESTING);
+    mds_plb.add_u64_counter(l_mds_openino_dir_fetch, "openino_dir_fetch",
+			    "OpenIno incomplete directory fetchings");
+    mds_plb.add_u64_counter(l_mds_openino_backtrace_fetch, "openino_backtrace_fetch",
+			    "OpenIno backtrace fetchings");
+    mds_plb.add_u64_counter(l_mds_openino_peer_discover, "openino_peer_discover",
+			    "OpenIno peer inode discovers");
     logger = mds_plb.create_perf_counters();
     g_ceph_context->get_perfcounters_collection()->add(logger);
   }
@@ -2688,7 +2804,8 @@ void MDSRank::check_ops_in_flight()
 
 void MDSRankDispatcher::handle_osd_map()
 {
-  if (is_active() && snapserver) {
+  if (is_active() &&
+      mdsmap->get_tableserver() == whoami) {
     snapserver->check_osd_map(true);
   }
 

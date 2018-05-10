@@ -68,7 +68,7 @@ class DaemonPerfCounters
   // The record of perf stat types, shared between daemons
   PerfCounterTypes &types;
 
-  DaemonPerfCounters(PerfCounterTypes &types_)
+  explicit DaemonPerfCounters(PerfCounterTypes &types_)
     : types(types_)
   {}
 
@@ -98,7 +98,7 @@ class DaemonState
   std::map<std::string, std::string> metadata;
 
   // TODO: this can be generalized to other daemons
-  std::vector<OSDHealthMetric> osd_health_metrics;
+  std::vector<DaemonHealthMetric> daemon_health_metrics;
 
   // Ephemeral state
   bool service_daemon = false;
@@ -119,7 +119,7 @@ class DaemonState
   // The perf counters received in MMgrReport messages
   DaemonPerfCounters perf_counters;
 
-  DaemonState(PerfCounterTypes &types_)
+  explicit DaemonState(PerfCounterTypes &types_)
     : perf_counters(types_)
   {
   }
@@ -130,7 +130,7 @@ class DaemonState
       auto p = config_defaults_bl.begin();
       try {
 	decode(config_defaults, p);
-      } catch (buffer::error e) {
+      } catch (buffer::error& e) {
       }
     }
     return config_defaults;
@@ -169,6 +169,7 @@ class DaemonStateIndex
   void insert(DaemonStatePtr dm);
   bool exists(const DaemonKey &key) const;
   DaemonStatePtr get(const DaemonKey &key);
+  void rm(const DaemonKey &key);
 
   // Note that these return by value rather than reference to avoid
   // callers needing to stay in lock while using result.  Callers must
