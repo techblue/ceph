@@ -18,13 +18,15 @@
 #define CEPH_REPLICATEDPG_H
 
 #include <boost/tuple/tuple.hpp>
-#include "include/assert.h" 
+#include "include/assert.h"
+#include "OSD.h"
 #include "PG.h"
 #include "Watch.h"
 #include "TierAgentState.h"
 #include "messages/MOSDOpReply.h"
 #include "common/Checksummer.h"
 #include "common/sharedptr_registry.hpp"
+#include "common/shared_cache.hpp"
 #include "ReplicatedBackend.h"
 #include "PGTransaction.h"
 #include "cls/refcount/cls_refcount_ops.h"
@@ -1269,7 +1271,7 @@ protected:
   // -- copyfrom --
   map<hobject_t, CopyOpRef> copy_ops;
 
-  int do_copy_get(OpContext *ctx, bufferlist::iterator& bp, OSDOp& op,
+  int do_copy_get(OpContext *ctx, bufferlist::const_iterator& bp, OSDOp& op,
 		  ObjectContextRef& obc);
   int finish_copy_get();
 
@@ -1293,7 +1295,7 @@ protected:
   void _write_copy_chunk(CopyOpRef cop, PGTransaction *t);
   uint64_t get_copy_chunk_size() const {
     uint64_t size = cct->_conf->osd_copyfrom_max_chunk;
-    if (pool.info.requires_aligned_append()) {
+    if (pool.info.required_alignment()) {
       uint64_t alignment = pool.info.required_alignment();
       if (size % alignment) {
 	size += alignment - (size % alignment);
@@ -1348,9 +1350,9 @@ protected:
   int do_xattr_cmp_str(int op, string& v1s, bufferlist& xattr);
 
   // -- checksum --
-  int do_checksum(OpContext *ctx, OSDOp& osd_op, bufferlist::iterator *bl_it);
+  int do_checksum(OpContext *ctx, OSDOp& osd_op, bufferlist::const_iterator *bl_it);
   int finish_checksum(OSDOp& osd_op, Checksummer::CSumType csum_type,
-                      bufferlist::iterator *init_value_bl_it,
+                      bufferlist::const_iterator *init_value_bl_it,
                       const bufferlist &read_bl);
 
   friend class C_ChecksumRead;
@@ -1365,7 +1367,7 @@ protected:
   int do_writesame(OpContext *ctx, OSDOp& osd_op);
 
   bool pgls_filter(PGLSFilter *filter, hobject_t& sobj, bufferlist& outdata);
-  int get_pgls_filter(bufferlist::iterator& iter, PGLSFilter **pfilter);
+  int get_pgls_filter(bufferlist::const_iterator& iter, PGLSFilter **pfilter);
 
   map<hobject_t, list<OpRequestRef>> in_progress_proxy_ops;
   void kick_proxy_ops_blocked(hobject_t& soid);
@@ -1455,8 +1457,8 @@ public:
 
   int _get_tmap(OpContext *ctx, bufferlist *header, bufferlist *vals);
   int do_tmap2omap(OpContext *ctx, unsigned flags);
-  int do_tmapup(OpContext *ctx, bufferlist::iterator& bp, OSDOp& osd_op);
-  int do_tmapup_slow(OpContext *ctx, bufferlist::iterator& bp, OSDOp& osd_op, bufferlist& bl);
+  int do_tmapup(OpContext *ctx, bufferlist::const_iterator& bp, OSDOp& osd_op);
+  int do_tmapup_slow(OpContext *ctx, bufferlist::const_iterator& bp, OSDOp& osd_op, bufferlist& bl);
 
   void do_osd_op_effects(OpContext *ctx, const ConnectionRef& conn);
 private:
@@ -1606,8 +1608,8 @@ private:
       };
       auto *pg = context< SnapTrimmer >().pg;
       if (pg->cct->_conf->osd_snap_trim_sleep > 0) {
-	Mutex::Locker l(pg->osd->snap_sleep_lock);
-	wakeup = pg->osd->snap_sleep_timer.add_event_after(
+	Mutex::Locker l(pg->osd->sleep_lock);
+	wakeup = pg->osd->sleep_timer.add_event_after(
 	  pg->cct->_conf->osd_snap_trim_sleep,
 	  new OnTimer{pg, pg->get_osdmap()->get_epoch()});
       } else {
@@ -1618,8 +1620,8 @@ private:
       context< SnapTrimmer >().log_exit(state_name, enter_time);
       auto *pg = context< SnapTrimmer >().pg;
       if (wakeup) {
-	Mutex::Locker l(pg->osd->snap_sleep_lock);
-	pg->osd->snap_sleep_timer.cancel_event(wakeup);
+	Mutex::Locker l(pg->osd->sleep_lock);
+	pg->osd->sleep_timer.cancel_event(wakeup);
 	wakeup = nullptr;
       }
     }

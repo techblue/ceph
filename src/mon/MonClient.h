@@ -73,7 +73,7 @@ struct MonClientPinger : public Dispatcher {
 
     bufferlist &payload = m->get_payload();
     if (result && payload.length() > 0) {
-      bufferlist::iterator p = payload.begin();
+      auto p = std::cbegin(payload);
       decode(*result, p);
     }
     done = true;
@@ -215,6 +215,16 @@ private:
   void _un_backoff();
   void _add_conns(uint64_t global_id);
   void _send_mon_message(Message *m);
+
+  std::map<entity_addr_t, MonConnection>::iterator _find_pending_con(
+    const ConnectionRef& con) {
+    for (auto i = pending_cons.begin(); i != pending_cons.end(); ++i) {
+      if (i->second.get_con() == con) {
+	return i;
+      }
+    }
+    return pending_cons.end();
+  }
 
 public:
   void set_entity_name(EntityName name) { entity_name = name; }

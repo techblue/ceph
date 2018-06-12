@@ -433,9 +433,7 @@ public:
   void send_message_osd_client(Message *m, const ConnectionRef& con) {
     con->send_message(m);
   }
-  entity_name_t get_cluster_msgr_name() {
-    return cluster_messenger->get_myname();
-  }
+  entity_name_t get_cluster_msgr_name() const;
 
 private:
   // -- scrub scheduling --
@@ -700,8 +698,9 @@ public:
   bool recovery_needs_sleep = true;
   utime_t recovery_schedule_time = utime_t();
 
-  Mutex recovery_sleep_lock;
-  SafeTimer recovery_sleep_timer;
+  // For recovery & scrub & snap
+  Mutex sleep_lock;
+  SafeTimer sleep_timer;
 
   // -- tids --
   // for ops i issue
@@ -734,12 +733,6 @@ public:
   void send_pg_temp();
 
   void send_pg_created(pg_t pgid);
-
-  Mutex snap_sleep_lock;
-  SafeTimer snap_sleep_timer;
-
-  Mutex scrub_sleep_lock;
-  SafeTimer scrub_sleep_timer;
 
   AsyncReserver<spg_t> snap_reserver;
   void queue_recovery_context(PG *pg, GenContext<ThreadPool::TPHandle&> *c);
@@ -1440,44 +1433,37 @@ private:
 
   // -- sessions --
 private:
-  void dispatch_session_waiting(Session *session, OSDMapRef osdmap);
+  void dispatch_session_waiting(SessionRef session, OSDMapRef osdmap);
   void maybe_share_map(Session *session, OpRequestRef op, OSDMapRef osdmap);
 
   Mutex session_waiting_lock;
-  set<Session*> session_waiting_for_map;
+  set<SessionRef> session_waiting_for_map;
 
   /// Caller assumes refs for included Sessions
-  void get_sessions_waiting_for_map(set<Session*> *out) {
+  void get_sessions_waiting_for_map(set<SessionRef> *out) {
     Mutex::Locker l(session_waiting_lock);
     out->swap(session_waiting_for_map);
   }
-  void register_session_waiting_on_map(Session *session) {
+  void register_session_waiting_on_map(SessionRef session) {
     Mutex::Locker l(session_waiting_lock);
-    if (session_waiting_for_map.insert(session).second) {
-      session->get();
-    }
+    session_waiting_for_map.insert(session);
   }
-  void clear_session_waiting_on_map(Session *session) {
+  void clear_session_waiting_on_map(SessionRef session) {
     Mutex::Locker l(session_waiting_lock);
-    set<Session*>::iterator i = session_waiting_for_map.find(session);
-    if (i != session_waiting_for_map.end()) {
-      (*i)->put();
-      session_waiting_for_map.erase(i);
-    }
+    session_waiting_for_map.erase(session);
   }
   void dispatch_sessions_waiting_on_map() {
-    set<Session*> sessions_to_check;
+    set<SessionRef> sessions_to_check;
     get_sessions_waiting_for_map(&sessions_to_check);
-    for (set<Session*>::iterator i = sessions_to_check.begin();
+    for (auto i = sessions_to_check.begin();
 	 i != sessions_to_check.end();
 	 sessions_to_check.erase(i++)) {
-      (*i)->session_dispatch_lock.Lock();
-      dispatch_session_waiting(*i, osdmap);
-      (*i)->session_dispatch_lock.Unlock();
-      (*i)->put();
+      Mutex::Locker l{(*i)->session_dispatch_lock};
+      SessionRef session = *i;
+      dispatch_session_waiting(session, osdmap);
     }
   }
-  void session_handle_reset(Session *session) {
+  void session_handle_reset(SessionRef session) {
     Mutex::Locker l(session->session_dispatch_lock);
     clear_session_waiting_on_map(session);
 
@@ -1915,7 +1901,6 @@ protected:
   void _preboot(epoch_t oldest, epoch_t newest);
   void _send_boot();
   void _collect_metadata(map<string,string> *pmeta);
-  std::string _collect_compression_algorithms();
 
   void start_waiting_for_healthy();
   bool _is_healthy();
@@ -1945,11 +1930,11 @@ protected:
 
   // -- failures --
   map<int,utime_t> failure_queue;
-  map<int,pair<utime_t,entity_inst_t> > failure_pending;
+  map<int,pair<utime_t,entity_addrvec_t> > failure_pending;
 
   void requeue_failures();
   void send_failures();
-  void send_still_alive(epoch_t epoch, const entity_inst_t &i);
+  void send_still_alive(epoch_t epoch, int osd, const entity_addrvec_t &addrs);
 
   ceph::coarse_mono_clock::time_point last_sent_beacon;
   Mutex min_last_epoch_clean_lock{"OSD::min_last_epoch_clean_lock"};

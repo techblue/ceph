@@ -8,14 +8,13 @@ import { SummaryService } from '../../../shared/services/summary.service';
 })
 export class NavigationComponent implements OnInit {
   summaryData: any;
-  rbdPools: Array<any> = [];
+  isCollapsed = true;
 
   constructor(private summaryService: SummaryService) {}
 
   ngOnInit() {
     this.summaryService.summaryData$.subscribe((data: any) => {
       this.summaryData = data;
-      this.rbdPools = data.rbd_pools;
     });
   }
 

@@ -83,10 +83,10 @@ void MgrMonitor::update_from_paxos(bool *need_bootstrap)
     bool old_available = map.get_available();
     uint64_t old_gid = map.get_active_gid();
 
-    bufferlist::iterator p = bl.begin();
+    auto p = bl.cbegin();
     map.decode(p);
 
-    dout(4) << "active server: " << map.active_addr
+    dout(4) << "active server: " << map.active_addrs
 	    << "(" << map.active_gid << ")" << dendl;
 
     ever_had_active_mgr = get_value("ever_had_active_mgr");
@@ -112,7 +112,7 @@ void MgrMonitor::update_from_paxos(bool *need_bootstrap)
       if (r < 0) {
         derr << "Failed to load mgr commands: " << cpp_strerror(r) << dendl;
       } else {
-        auto p = loaded_commands.begin();
+        auto p = loaded_commands.cbegin();
         decode(command_descs, p);
       }
     }
@@ -320,10 +320,10 @@ bool MgrMonitor::prepare_beacon(MonOpRequestRef op)
     }
 
     // A beacon from the currently active daemon
-    if (pending_map.active_addr != m->get_server_addr()) {
-      dout(4) << "learned address " << m->get_server_addr()
-	      << " (was " << pending_map.active_addr << ")" << dendl;
-      pending_map.active_addr = m->get_server_addr();
+    if (pending_map.active_addrs != m->get_server_addrs()) {
+      dout(4) << "learned address " << m->get_server_addrs()
+	      << " (was " << pending_map.active_addrs << ")" << dendl;
+      pending_map.active_addrs = m->get_server_addrs();
       updated = true;
     }
 
@@ -577,7 +577,7 @@ void MgrMonitor::tick()
                         << " daemon " << pending_map.active_name;
     } else {
       dout(4) << "Active is laggy but have no standbys to replace it" << dendl;
-      mon->clog->warn() << "Manager daemon " << old_active_name
+      mon->clog->info() << "Manager daemon " << old_active_name
                         << " is unresponsive.  No standby daemons available.";
     }
   } else if (pending_map.active_gid == 0) {
@@ -620,7 +620,7 @@ bool MgrMonitor::promote_standby()
     pending_map.active_gid = replacement_gid;
     pending_map.active_name = pending_map.standbys.at(replacement_gid).name;
     pending_map.available = false;
-    pending_map.active_addr = entity_addr_t();
+    pending_map.active_addrs = entity_addrvec_t();
 
     drop_standby(replacement_gid, false);
 
@@ -641,7 +641,7 @@ void MgrMonitor::drop_active()
   pending_map.active_name = "";
   pending_map.active_gid = 0;
   pending_map.available = false;
-  pending_map.active_addr = entity_addr_t();
+  pending_map.active_addrs = entity_addrvec_t();
   pending_map.services.clear();
 
   // So that when new active mgr subscribes to mgrdigest, it will
@@ -703,7 +703,7 @@ bool MgrMonitor::preprocess_command(MonOpRequestRef op)
 	goto reply;
       }
       MgrMap m;
-      auto p = bl.begin();
+      auto p = bl.cbegin();
       m.decode(p);
       f->dump_object("mgrmap", m);
     }
@@ -962,7 +962,7 @@ int MgrMonitor::load_metadata(const string& name, std::map<string, string>& m,
   if (r < 0)
     return r;
   try {
-    bufferlist::iterator p = bl.begin();
+    auto p = bl.cbegin();
     decode(m, p);
   }
   catch (buffer::error& e) {

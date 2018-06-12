@@ -17,7 +17,6 @@ if(WITH_RBD)
   add_subdirectory(cls_rbd)
 endif(WITH_RBD)
 add_subdirectory(cls_refcount)
-add_subdirectory(cls_replica_log)
 add_subdirectory(cls_rgw)
 add_subdirectory(cls_statelog)
 add_subdirectory(cls_version)
@@ -31,9 +30,6 @@ add_subdirectory(erasure-code)
 add_subdirectory(filestore)
 add_subdirectory(fs)
 add_subdirectory(journal)
-if(WITH_EMBEDDED)
-  add_subdirectory(libcephd)
-endif(WITH_EMBEDDED)
 add_subdirectory(libcephfs)
 add_subdirectory(librados)
 add_subdirectory(librados_test_stub)
@@ -58,6 +54,9 @@ endif(${WITH_RADOSGW})
 if(WITH_RBD)
   add_subdirectory(rbd_mirror)
 endif(WITH_RBD)
+if(WITH_SEASTAR)
+  add_subdirectory(crimson)
+endif()
 add_subdirectory(system)
 if(WITH_FIO OR WITH_SYSTEM_FIO)
   add_subdirectory(fio)
@@ -102,6 +101,11 @@ target_link_libraries(test_build_libcommon ceph-common pthread ${CRYPTO_LIBS} ${
 if(WITH_RADOSGW)
   add_executable(test_build_librgw buildtest_skeleton.cc)
   target_link_libraries(test_build_librgw rgw_a pthread ${CRYPTO_LIBS} ${EXTRALIBS})
+endif(WITH_RADOSGW)
+
+if(WITH_RADOSGW)
+  add_executable(test_build_librgw_admin_user buildtest_skeleton.cc)
+  target_link_libraries(test_build_librgw_admin_user pthread ${CRYPTO_LIBS} ${EXTRALIBS})
 endif(WITH_RADOSGW)
 
 if(WITH_LIBCEPHFS)
@@ -387,6 +391,18 @@ target_link_libraries(test_rgw_ldap
   ${UNITTEST_LIBS}
   )
 
+# unittest_librgw_admin_user
+add_executable(ceph_test_librgw_admin_user test_librgw_admin_user.cc)
+set_target_properties(ceph_test_librgw_admin_user PROPERTIES COMPILE_FLAGS ${UNITTEST_CXX_FLAGS})
+target_link_libraries(ceph_test_librgw_admin_user
+  rgw_admin_user
+  cls_otp_client
+  librados
+  ceph-common
+  ${UNITTEST_LIBS}
+  ${EXTRALIBS}
+   )
+
 endif(${WITH_RADOSGW})
 
 # ceph_multi_stress_watch
@@ -524,7 +540,6 @@ install(TARGETS
 #following dependencies are run inside make check unit tests
 add_dependencies(tests
   ceph-mon
-  ceph-mgr
   ceph-authtool
   get_command_descriptions
   crushtool
@@ -545,7 +560,10 @@ add_dependencies(tests
   ceph_erasure_code_non_regression
   ceph_erasure_code
   ceph-disk
-  cython_modules)
+  cython${PY_BINDING_INFIX}_modules)
+if(WITH_MGR)
+  add_dependencies(tests ceph-mgr)
+endif()
 if(WITH_RBD)
   add_dependencies(tests unittest_librbd rbd)
   if(FREEBSD)
@@ -744,7 +762,7 @@ add_executable(unittest_denc
   test_denc.cc
   )
 add_ceph_unittest(unittest_denc)
-target_link_libraries(unittest_denc os global)
+target_link_libraries(unittest_denc global)
 
 # unittest_mempool
 add_executable(unittest_mempool

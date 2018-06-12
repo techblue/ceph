@@ -4,7 +4,7 @@ import {
 import { FormControl, FormGroup, Validators } from '@angular/forms';
 
 import { BsModalRef } from 'ngx-bootstrap';
-import { Observable } from 'rxjs/Observable';
+import { Observable } from 'rxjs';
 
 import { SubmitButtonComponent } from '../submit-button/submit-button.component';
 
@@ -72,10 +72,6 @@ export class DeletionModalComponent implements OnInit {
     this.confirmation.setValue($e.target.value);
     this.confirmation.markAsDirty();
     this.confirmation.updateValueAndValidity();
-  }
-
-  delete ($event) {
-    this.submitButton.submit($event);
   }
 
   deletionCall() {

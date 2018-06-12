@@ -115,32 +115,30 @@ class FakeDispatcher : public Dispatcher {
   void ms_handle_fast_connect(Connection *con) override {
     lock.Lock();
     lderr(g_ceph_context) << __func__ << " " << con << dendl;
-    Session *s = static_cast<Session*>(con->get_priv());
+    auto s = con->get_priv();
     if (!s) {
-      s = new Session(con);
-      con->set_priv(s->get());
-      lderr(g_ceph_context) << __func__ << " con: " << con << " count: " << s->count << dendl;
+      auto session = new Session(con);
+      con->set_priv(RefCountedPtr{session, false});
+      lderr(g_ceph_context) << __func__ << " con: " << con
+			    << " count: " << session->count << dendl;
     }
-    s->put();
     got_connect = true;
     cond.Signal();
     lock.Unlock();
   }
   void ms_handle_fast_accept(Connection *con) override {
-    Session *s = static_cast<Session*>(con->get_priv());
-    if (!s) {
-      s = new Session(con);
-      con->set_priv(s->get());
+    if (!con->get_priv()) {
+      con->set_priv(RefCountedPtr{new Session(con), false});
     }
-    s->put();
   }
   bool ms_dispatch(Message *m) override {
-    Session *s = static_cast<Session*>(m->get_connection()->get_priv());
+    auto priv = m->get_connection()->get_priv();
+    auto s = static_cast<Session*>(priv.get());
     if (!s) {
       s = new Session(m->get_connection());
-      m->get_connection()->set_priv(s->get());
+      priv.reset(s, false);
+      m->get_connection()->set_priv(priv);
     }
-    s->put();
     s->count++;
     lderr(g_ceph_context) << __func__ << " conn: " << m->get_connection() << " session " << s << " count: " << s->count << dendl;
     if (is_server) {
@@ -155,22 +153,20 @@ class FakeDispatcher : public Dispatcher {
   bool ms_handle_reset(Connection *con) override {
     Mutex::Locker l(lock);
     lderr(g_ceph_context) << __func__ << " " << con << dendl;
-    Session *s = static_cast<Session*>(con->get_priv());
-    if (s) {
-      s->con.reset(NULL);  // break con <-> session ref cycle
-      con->set_priv(NULL);   // break ref <-> session cycle, if any
-      s->put();
+    auto priv = con->get_priv();
+    if (auto s = static_cast<Session*>(priv.get()); s) {
+      s->con.reset();  // break con <-> session ref cycle
+      con->set_priv(nullptr);   // break ref <-> session cycle, if any
     }
     return true;
   }
   void ms_handle_remote_reset(Connection *con) override {
     Mutex::Locker l(lock);
     lderr(g_ceph_context) << __func__ << " " << con << dendl;
-    Session *s = static_cast<Session*>(con->get_priv());
-    if (s) {
-      s->con.reset(NULL);  // break con <-> session ref cycle
-      con->set_priv(NULL);   // break ref <-> session cycle, if any
-      s->put();
+    auto priv = con->get_priv();
+    if (auto s = static_cast<Session*>(priv.get()); s) {
+      s->con.reset();  // break con <-> session ref cycle
+      con->set_priv(nullptr);   // break ref <-> session cycle, if any
     }
     got_remote_reset = true;
     cond.Signal();
@@ -179,12 +175,13 @@ class FakeDispatcher : public Dispatcher {
     return false;
   }
   void ms_fast_dispatch(Message *m) override {
-    Session *s = static_cast<Session*>(m->get_connection()->get_priv());
+    auto priv = m->get_connection()->get_priv();
+    auto s = static_cast<Session*>(priv.get());
     if (!s) {
       s = new Session(m->get_connection());
-      m->get_connection()->set_priv(s->get());
+      priv.reset(s, false);
+      m->get_connection()->set_priv(priv);
     }
-    s->put();
     s->count++;
     lderr(g_ceph_context) << __func__ << " conn: " << m->get_connection() << " session " << s << " count: " << s->count << dendl;
     if (is_server) {
@@ -229,7 +226,8 @@ TEST_P(MessengerTest, SimpleTest) {
 
   // 1. simple round trip
   MPing *m = new MPing();
-  ConnectionRef conn = client_msgr->get_connection(server_msgr->get_myinst());
+  ConnectionRef conn = client_msgr->connect_to(server_msgr->get_mytype(),
+					       server_msgr->get_myaddrs());
   {
     ASSERT_EQ(conn->send_message(m), 0);
     Mutex::Locker l(cli_dispatcher.lock);
@@ -238,17 +236,23 @@ TEST_P(MessengerTest, SimpleTest) {
     cli_dispatcher.got_new = false;
   }
   ASSERT_TRUE(conn->is_connected());
-  ASSERT_TRUE((static_cast<Session*>(conn->get_priv()))->get_count() == 1);
+  ASSERT_EQ(1, static_cast<Session*>(conn->get_priv().get())->get_count());
   ASSERT_TRUE(conn->peer_is_osd());
 
   // 2. test rebind port
   set<int> avoid_ports;
-  for (int i = 0; i < 10 ; i++)
-    avoid_ports.insert(server_msgr->get_myaddr().get_port() + i);
+  for (int i = 0; i < 10 ; i++) {
+    for (auto a : server_msgr->get_myaddrs().v) {
+      avoid_ports.insert(a.get_port() + i);
+    }
+  }
   server_msgr->rebind(avoid_ports);
-  ASSERT_TRUE(avoid_ports.count(server_msgr->get_myaddr().get_port()) == 0);
+  for (auto a : server_msgr->get_myaddrs().v) {
+    ASSERT_TRUE(avoid_ports.count(a.get_port()) == 0);
+  }
 
-  conn = client_msgr->get_connection(server_msgr->get_myinst());
+  conn = client_msgr->connect_to(server_msgr->get_mytype(),
+				 server_msgr->get_myaddrs());
   {
     m = new MPing();
     ASSERT_EQ(conn->send_message(m), 0);
@@ -257,7 +261,7 @@ TEST_P(MessengerTest, SimpleTest) {
       cli_dispatcher.cond.Wait(cli_dispatcher.lock);
     cli_dispatcher.got_new = false;
   }
-  ASSERT_TRUE(static_cast<Session*>(conn->get_priv())->get_count() == 1);
+  ASSERT_EQ(1U, static_cast<Session*>(conn->get_priv().get())->get_count());
 
   // 3. test markdown connection
   conn->mark_down();
@@ -284,7 +288,7 @@ TEST_P(MessengerTest, SimpleTest) {
     cli_dispatcher.got_new = false;
   }
   srv_dispatcher.loopback = false;
-  ASSERT_TRUE(static_cast<Session*>(conn->get_priv())->get_count() == 1);
+  ASSERT_EQ(1U, static_cast<Session*>(conn->get_priv().get())->get_count());
   client_msgr->shutdown();
   client_msgr->wait();
   server_msgr->shutdown();
@@ -303,7 +307,8 @@ TEST_P(MessengerTest, NameAddrTest) {
   client_msgr->start();
 
   MPing *m = new MPing();
-  ConnectionRef conn = client_msgr->get_connection(server_msgr->get_myinst());
+  ConnectionRef conn = client_msgr->connect_to(server_msgr->get_mytype(),
+					       server_msgr->get_myaddrs());
   {
     ASSERT_EQ(conn->send_message(m), 0);
     Mutex::Locker l(cli_dispatcher.lock);
@@ -311,12 +316,13 @@ TEST_P(MessengerTest, NameAddrTest) {
       cli_dispatcher.cond.Wait(cli_dispatcher.lock);
     cli_dispatcher.got_new = false;
   }
-  ASSERT_TRUE(static_cast<Session*>(conn->get_priv())->get_count() == 1);
-  ASSERT_TRUE(conn->get_peer_addr() == server_msgr->get_myaddr());
-  ConnectionRef server_conn = server_msgr->get_connection(client_msgr->get_myinst());
+  ASSERT_EQ(1U, static_cast<Session*>(conn->get_priv().get())->get_count());
+  ASSERT_TRUE(conn->get_peer_addrs() == server_msgr->get_myaddrs());
+  ConnectionRef server_conn = server_msgr->connect_to(
+    client_msgr->get_mytype(), client_msgr->get_myaddrs());
   // Make should server_conn is the one we already accepted from client,
   // so it means client_msgr has the same addr when server connection has
-  ASSERT_TRUE(static_cast<Session*>(conn->get_priv())->get_count() == 1);
+  ASSERT_EQ(1U, static_cast<Session*>(conn->get_priv().get())->get_count());
   server_msgr->shutdown();
   client_msgr->shutdown();
   server_msgr->wait();
@@ -348,7 +354,8 @@ TEST_P(MessengerTest, FeatureTest) {
   client_msgr->start();
 
   MPing *m = new MPing();
-  ConnectionRef conn = client_msgr->get_connection(server_msgr->get_myinst());
+  ConnectionRef conn = client_msgr->connect_to(server_msgr->get_mytype(),
+					       server_msgr->get_myaddrs());
   conn->send_message(m);
   CHECK_AND_WAIT_TRUE(!conn->is_connected());
   // should failed build a connection
@@ -363,7 +370,8 @@ TEST_P(MessengerTest, FeatureTest) {
   client_msgr->set_policy(entity_name_t::TYPE_OSD, p);
   client_msgr->start();
 
-  conn = client_msgr->get_connection(server_msgr->get_myinst());
+  conn = client_msgr->connect_to(server_msgr->get_mytype(),
+				 server_msgr->get_myaddrs());
   {
     m = new MPing();
     ASSERT_EQ(conn->send_message(m), 0);
@@ -372,7 +380,7 @@ TEST_P(MessengerTest, FeatureTest) {
       cli_dispatcher.cond.Wait(cli_dispatcher.lock);
     cli_dispatcher.got_new = false;
   }
-  ASSERT_TRUE(static_cast<Session*>(conn->get_priv())->get_count() == 1);
+  ASSERT_EQ(1U, static_cast<Session*>(conn->get_priv().get())->get_count());
 
   server_msgr->shutdown();
   client_msgr->shutdown();
@@ -394,7 +402,8 @@ TEST_P(MessengerTest, TimeoutTest) {
 
   // 1. build the connection
   MPing *m = new MPing();
-  ConnectionRef conn = client_msgr->get_connection(server_msgr->get_myinst());
+  ConnectionRef conn = client_msgr->connect_to(server_msgr->get_mytype(),
+						    server_msgr->get_myaddrs());
   {
     ASSERT_EQ(conn->send_message(m), 0);
     Mutex::Locker l(cli_dispatcher.lock);
@@ -403,7 +412,7 @@ TEST_P(MessengerTest, TimeoutTest) {
     cli_dispatcher.got_new = false;
   }
   ASSERT_TRUE(conn->is_connected());
-  ASSERT_TRUE((static_cast<Session*>(conn->get_priv()))->get_count() == 1);
+  ASSERT_EQ(1U, static_cast<Session*>(conn->get_priv().get())->get_count());
   ASSERT_TRUE(conn->peer_is_osd());
 
   // 2. wait for idle
@@ -435,7 +444,8 @@ TEST_P(MessengerTest, StatefulTest) {
   client_msgr->start();
 
   // 1. test for server standby
-  ConnectionRef conn = client_msgr->get_connection(server_msgr->get_myinst());
+  ConnectionRef conn = client_msgr->connect_to(server_msgr->get_mytype(),
+					       server_msgr->get_myaddrs());
   {
     m = new MPing();
     ASSERT_EQ(conn->send_message(m), 0);
@@ -444,15 +454,17 @@ TEST_P(MessengerTest, StatefulTest) {
       cli_dispatcher.cond.Wait(cli_dispatcher.lock);
     cli_dispatcher.got_new = false;
   }
-  ASSERT_TRUE(static_cast<Session*>(conn->get_priv())->get_count() == 1);
+  ASSERT_EQ(1U, static_cast<Session*>(conn->get_priv().get())->get_count());
   conn->mark_down();
   ASSERT_FALSE(conn->is_connected());
-  ConnectionRef server_conn = server_msgr->get_connection(client_msgr->get_myinst());
+  ConnectionRef server_conn = server_msgr->connect_to(
+    client_msgr->get_mytype(), client_msgr->get_myaddrs());
   // don't lose state
-  ASSERT_TRUE(static_cast<Session*>(server_conn->get_priv())->get_count() == 1);
+  ASSERT_EQ(1U, static_cast<Session*>(server_conn->get_priv().get())->get_count());
 
   srv_dispatcher.got_new = false;
-  conn = client_msgr->get_connection(server_msgr->get_myinst());
+  conn = client_msgr->connect_to(server_msgr->get_mytype(),
+				 server_msgr->get_myaddrs());
   {
     m = new MPing();
     ASSERT_EQ(conn->send_message(m), 0);
@@ -461,8 +473,9 @@ TEST_P(MessengerTest, StatefulTest) {
       cli_dispatcher.cond.Wait(cli_dispatcher.lock);
     cli_dispatcher.got_new = false;
   }
-  ASSERT_TRUE(static_cast<Session*>(conn->get_priv())->get_count() == 1);
-  server_conn = server_msgr->get_connection(client_msgr->get_myinst());
+  ASSERT_EQ(1U, static_cast<Session*>(conn->get_priv().get())->get_count());
+  server_conn = server_msgr->connect_to(client_msgr->get_mytype(),
+					client_msgr->get_myaddrs());
   {
     Mutex::Locker l(srv_dispatcher.lock);
     while (!srv_dispatcher.got_remote_reset)
@@ -502,9 +515,10 @@ TEST_P(MessengerTest, StatefulTest) {
     cli_dispatcher.got_new = false;
   }
   // resetcheck happen
-  ASSERT_EQ(1U, static_cast<Session*>(conn->get_priv())->get_count());
-  server_conn = server_msgr->get_connection(client_msgr->get_myinst());
-  ASSERT_EQ(1U, static_cast<Session*>(server_conn->get_priv())->get_count());
+  ASSERT_EQ(1U, static_cast<Session*>(conn->get_priv().get())->get_count());
+  server_conn = server_msgr->connect_to(client_msgr->get_mytype(),
+					client_msgr->get_myaddrs());
+  ASSERT_EQ(1U, static_cast<Session*>(server_conn->get_priv().get())->get_count());
   cli_dispatcher.got_remote_reset = false;
 
   server_msgr->shutdown();
@@ -530,7 +544,8 @@ TEST_P(MessengerTest, StatelessTest) {
   client_msgr->start();
 
   // 1. test for server lose state
-  ConnectionRef conn = client_msgr->get_connection(server_msgr->get_myinst());
+  ConnectionRef conn = client_msgr->connect_to(server_msgr->get_mytype(),
+						    server_msgr->get_myaddrs());
   {
     m = new MPing();
     ASSERT_EQ(conn->send_message(m), 0);
@@ -539,12 +554,13 @@ TEST_P(MessengerTest, StatelessTest) {
       cli_dispatcher.cond.Wait(cli_dispatcher.lock);
     cli_dispatcher.got_new = false;
   }
-  ASSERT_TRUE(static_cast<Session*>(conn->get_priv())->get_count() == 1);
+  ASSERT_EQ(1U, static_cast<Session*>(conn->get_priv().get())->get_count());
   conn->mark_down();
   ASSERT_FALSE(conn->is_connected());
 
   srv_dispatcher.got_new = false;
-  conn = client_msgr->get_connection(server_msgr->get_myinst());
+  conn = client_msgr->connect_to(server_msgr->get_mytype(),
+				      server_msgr->get_myaddrs());
   {
     m = new MPing();
     ASSERT_EQ(conn->send_message(m), 0);
@@ -553,15 +569,16 @@ TEST_P(MessengerTest, StatelessTest) {
       cli_dispatcher.cond.Wait(cli_dispatcher.lock);
     cli_dispatcher.got_new = false;
   }
-  ASSERT_TRUE(static_cast<Session*>(conn->get_priv())->get_count() == 1);
-  ConnectionRef server_conn = server_msgr->get_connection(client_msgr->get_myinst());
+  ASSERT_EQ(1U, static_cast<Session*>(conn->get_priv().get())->get_count());
+  ConnectionRef server_conn = server_msgr->connect_to(client_msgr->get_mytype(),
+						      client_msgr->get_myaddrs());
   // server lose state
   {
     Mutex::Locker l(srv_dispatcher.lock);
     while (!srv_dispatcher.got_new)
       srv_dispatcher.cond.Wait(srv_dispatcher.lock);
   }
-  ASSERT_EQ(1U, static_cast<Session*>(server_conn->get_priv())->get_count());
+  ASSERT_EQ(1U, static_cast<Session*>(server_conn->get_priv().get())->get_count());
 
   // 2. test for client lossy
   server_conn->mark_down();
@@ -569,7 +586,8 @@ TEST_P(MessengerTest, StatelessTest) {
   conn->send_keepalive();
   CHECK_AND_WAIT_TRUE(!conn->is_connected());
   ASSERT_FALSE(conn->is_connected());
-  conn = client_msgr->get_connection(server_msgr->get_myinst());
+  conn = client_msgr->connect_to(server_msgr->get_mytype(),
+						    server_msgr->get_myaddrs());
   {
     m = new MPing();
     ASSERT_EQ(conn->send_message(m), 0);
@@ -578,7 +596,7 @@ TEST_P(MessengerTest, StatelessTest) {
       cli_dispatcher.cond.Wait(cli_dispatcher.lock);
     cli_dispatcher.got_new = false;
   }
-  ASSERT_TRUE(static_cast<Session*>(conn->get_priv())->get_count() == 1);
+  ASSERT_EQ(1U, static_cast<Session*>(conn->get_priv().get())->get_count());
 
   server_msgr->shutdown();
   client_msgr->shutdown();
@@ -603,7 +621,8 @@ TEST_P(MessengerTest, ClientStandbyTest) {
   client_msgr->start();
 
   // 1. test for client standby, resetcheck
-  ConnectionRef conn = client_msgr->get_connection(server_msgr->get_myinst());
+  ConnectionRef conn = client_msgr->connect_to(server_msgr->get_mytype(),
+						    server_msgr->get_myaddrs());
   {
     m = new MPing();
     ASSERT_EQ(conn->send_message(m), 0);
@@ -612,8 +631,10 @@ TEST_P(MessengerTest, ClientStandbyTest) {
       cli_dispatcher.cond.Wait(cli_dispatcher.lock);
     cli_dispatcher.got_new = false;
   }
-  ASSERT_TRUE(static_cast<Session*>(conn->get_priv())->get_count() == 1);
-  ConnectionRef server_conn = server_msgr->get_connection(client_msgr->get_myinst());
+  ASSERT_EQ(1U, static_cast<Session*>(conn->get_priv().get())->get_count());
+  ConnectionRef server_conn = server_msgr->connect_to(
+    client_msgr->get_mytype(),
+    client_msgr->get_myaddrs());
   ASSERT_FALSE(cli_dispatcher.got_remote_reset);
   cli_dispatcher.got_connect = false;
   server_conn->mark_down();
@@ -643,9 +664,10 @@ TEST_P(MessengerTest, ClientStandbyTest) {
       cli_dispatcher.cond.Wait(cli_dispatcher.lock);
     cli_dispatcher.got_new = false;
   }
-  ASSERT_TRUE(static_cast<Session*>(conn->get_priv())->get_count() == 1);
-  server_conn = server_msgr->get_connection(client_msgr->get_myinst());
-  ASSERT_TRUE(static_cast<Session*>(server_conn->get_priv())->get_count() == 1);
+  ASSERT_EQ(1U, static_cast<Session*>(conn->get_priv().get())->get_count());
+  server_conn = server_msgr->connect_to(client_msgr->get_mytype(),
+					client_msgr->get_myaddrs());
+  ASSERT_EQ(1U, static_cast<Session*>(server_conn->get_priv().get())->get_count());
 
   server_msgr->shutdown();
   client_msgr->shutdown();
@@ -669,7 +691,8 @@ TEST_P(MessengerTest, AuthTest) {
 
   // 1. simple auth round trip
   MPing *m = new MPing();
-  ConnectionRef conn = client_msgr->get_connection(server_msgr->get_myinst());
+  ConnectionRef conn = client_msgr->connect_to(server_msgr->get_mytype(),
+						    server_msgr->get_myaddrs());
   {
     ASSERT_EQ(conn->send_message(m), 0);
     Mutex::Locker l(cli_dispatcher.lock);
@@ -678,7 +701,7 @@ TEST_P(MessengerTest, AuthTest) {
     cli_dispatcher.got_new = false;
   }
   ASSERT_TRUE(conn->is_connected());
-  ASSERT_TRUE((static_cast<Session*>(conn->get_priv()))->get_count() == 1);
+  ASSERT_EQ(1U, static_cast<Session*>(conn->get_priv().get())->get_count());
 
   // 2. mix auth
   g_ceph_context->_conf->set_val("auth_cluster_required", "none");
@@ -686,7 +709,8 @@ TEST_P(MessengerTest, AuthTest) {
   g_ceph_context->_conf->set_val("auth_client_required", "none");
   conn->mark_down();
   ASSERT_FALSE(conn->is_connected());
-  conn = client_msgr->get_connection(server_msgr->get_myinst());
+  conn = client_msgr->connect_to(server_msgr->get_mytype(),
+						    server_msgr->get_myaddrs());
   {
     MPing *m = new MPing();
     ASSERT_EQ(conn->send_message(m), 0);
@@ -696,7 +720,7 @@ TEST_P(MessengerTest, AuthTest) {
     cli_dispatcher.got_new = false;
   }
   ASSERT_TRUE(conn->is_connected());
-  ASSERT_TRUE((static_cast<Session*>(conn->get_priv()))->get_count() == 1);
+  ASSERT_EQ(1U, static_cast<Session*>(conn->get_priv().get())->get_count());
 
   server_msgr->shutdown();
   client_msgr->shutdown();
@@ -723,7 +747,8 @@ TEST_P(MessengerTest, MessageTest) {
   // 1. A very large "front"(as well as "payload")
   // Because a external message need to invade Messenger::decode_message,
   // here we only use existing message class(MCommand)
-  ConnectionRef conn = client_msgr->get_connection(server_msgr->get_myinst());
+  ConnectionRef conn = client_msgr->connect_to(server_msgr->get_mytype(),
+						    server_msgr->get_myaddrs());
   {
     uuid_d uuid;
     uuid.generate_random();
@@ -867,7 +892,7 @@ class SyntheticDispatcher : public Dispatcher {
     }
 
     Payload pl;
-    auto p = m->get_data().begin();
+    auto p = m->get_data().cbegin();
     decode(pl, p);
     if (pl.who == Payload::PING) {
       lderr(g_ceph_context) << __func__ << " conn=" << m->get_connection() << pl << dendl;
@@ -1060,14 +1085,16 @@ class SyntheticWorkload {
       if (server->get_default_policy().server) {
         p = make_pair(client, server);
       } else {
-        ConnectionRef conn = client->get_connection(server->get_myinst());
+        ConnectionRef conn = client->connect_to(server->get_mytype(),
+						     server->get_myaddrs());
         if (available_connections.count(conn) || choose(rng) % 2)
           p = make_pair(client, server);
         else
           p = make_pair(server, client);
       }
     }
-    ConnectionRef conn = p.first->get_connection(p.second->get_myinst());
+    ConnectionRef conn = p.first->connect_to(p.second->get_mytype(),
+						  p.second->get_myaddrs());
     available_connections[conn] = p;
   }
 
@@ -1102,7 +1129,8 @@ class SyntheticWorkload {
     // it's a lossless policy, so we need to mark down each side
     if (!p.first->get_default_policy().server && !p.second->get_default_policy().server) {
       ASSERT_EQ(conn->get_messenger(), p.first);
-      ConnectionRef peer = p.second->get_connection(p.first->get_myinst());
+      ConnectionRef peer = p.second->connect_to(p.first->get_mytype(),
+						     p.first->get_myaddrs());
       peer->mark_down();
       dispatcher.clear_pending(peer);
       available_connections.erase(peer);
@@ -1465,8 +1493,10 @@ TEST_P(MessengerTest, MarkdownTest) {
   bool equal = false;
   uint64_t equal_count = 0;
   while (i--) {
-    ConnectionRef conn1 = client_msgr->get_connection(server_msgr->get_myinst());
-    ConnectionRef conn2 = client_msgr->get_connection(server_msgr2->get_myinst());
+    ConnectionRef conn1 = client_msgr->connect_to(server_msgr->get_mytype(),
+						       server_msgr->get_myaddrs());
+    ConnectionRef conn2 = client_msgr->connect_to(server_msgr2->get_mytype(),
+						       server_msgr2->get_myaddrs());
     MPing *m = new MPing();
     ASSERT_EQ(conn1->send_message(m), 0);
     m = new MPing();

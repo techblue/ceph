@@ -772,7 +772,6 @@ OPTION(osd_debug_drop_ping_probability, OPT_DOUBLE)
 OPTION(osd_debug_drop_ping_duration, OPT_INT)
 OPTION(osd_debug_op_order, OPT_BOOL)
 OPTION(osd_debug_verify_missing_on_start, OPT_BOOL)
-OPTION(osd_debug_scrub_chance_rewrite_digest, OPT_U64)
 OPTION(osd_debug_verify_snaps, OPT_BOOL)
 OPTION(osd_debug_verify_stray_on_activate, OPT_BOOL)
 OPTION(osd_debug_skip_full_check_in_backfill_reservation, OPT_BOOL)
@@ -1024,7 +1023,6 @@ OPTION(bluestore_cache_size_hdd, OPT_U64)
 OPTION(bluestore_cache_size_ssd, OPT_U64)
 OPTION(bluestore_cache_meta_ratio, OPT_DOUBLE)
 OPTION(bluestore_cache_kv_ratio, OPT_DOUBLE)
-OPTION(bluestore_cache_kv_min, OPT_INT)
 OPTION(bluestore_kvbackend, OPT_STR)
 OPTION(bluestore_allocator, OPT_STR)     // stupid | bitmap
 OPTION(bluestore_freelist_blocks_per_key, OPT_INT)
@@ -1184,6 +1182,16 @@ OPTION(filestore_queue_max_delay_multiple, OPT_DOUBLE)
 /// Filestore high delay multiple.  Defaults to 0 (disabled)
 OPTION(filestore_queue_high_delay_multiple, OPT_DOUBLE)
 
+/// Filestore max delay multiple bytes.  Defaults to 0 (disabled)
+OPTION(filestore_queue_max_delay_multiple_bytes, OPT_DOUBLE)
+/// Filestore high delay multiple bytes.  Defaults to 0 (disabled)
+OPTION(filestore_queue_high_delay_multiple_bytes, OPT_DOUBLE)
+
+/// Filestore max delay multiple ops.  Defaults to 0 (disabled)
+OPTION(filestore_queue_max_delay_multiple_ops, OPT_DOUBLE)
+/// Filestore high delay multiple ops.  Defaults to 0 (disabled)
+OPTION(filestore_queue_high_delay_multiple_ops, OPT_DOUBLE)
+
 /// Use above to inject delays intended to keep the op queue between low and high
 OPTION(filestore_queue_low_threshhold, OPT_DOUBLE)
 OPTION(filestore_queue_high_threshhold, OPT_DOUBLE)
@@ -1289,6 +1297,7 @@ OPTION(rgw_lc_max_objs, OPT_INT)
 OPTION(rgw_lc_debug_interval, OPT_INT)  // Debug run interval, in seconds
 OPTION(rgw_script_uri, OPT_STR) // alternative value for SCRIPT_URI if not set in request
 OPTION(rgw_request_uri, OPT_STR) // alternative value for REQUEST_URI if not set in request
+OPTION(rgw_ignore_get_invalid_range, OPT_BOOL) // treat invalid (e.g., negative) range requests as full
 OPTION(rgw_swift_url, OPT_STR)             // the swift url, being published by the internal swift auth
 OPTION(rgw_swift_url_prefix, OPT_STR) // entry point for which a url is considered a swift url
 OPTION(rgw_swift_auth_url, OPT_STR)        // default URL to go and verify tokens for v1 auth (if not using internal swift auth)
@@ -1428,7 +1437,6 @@ OPTION(rgw_data_log_window, OPT_INT) // data log entries window (in seconds)
 OPTION(rgw_data_log_changes_size, OPT_INT) // number of in-memory entries to hold for data changes log
 OPTION(rgw_data_log_num_shards, OPT_INT) // number of objects to keep data changes log on
 OPTION(rgw_data_log_obj_prefix, OPT_STR) //
-OPTION(rgw_replica_log_obj_prefix, OPT_STR) //
 
 OPTION(rgw_bucket_quota_ttl, OPT_INT) // time for cached bucket stats to be cached within rgw instance
 OPTION(rgw_bucket_quota_soft_threshold, OPT_DOUBLE) // threshold from which we don't rely on cached info for quota decisions

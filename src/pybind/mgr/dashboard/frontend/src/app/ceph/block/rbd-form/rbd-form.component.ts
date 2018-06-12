@@ -43,7 +43,6 @@ export class RbdFormComponent implements OnInit {
   features: any;
   featuresList = [];
 
-  routeParamsSubscribe: any;
   pool: string;
 
   advancedEnabled = false;
@@ -203,7 +202,7 @@ export class RbdFormComponent implements OnInit {
     if (this.mode === this.rbdFormMode.editing ||
         this.mode === this.rbdFormMode.cloning ||
         this.mode === this.rbdFormMode.copying) {
-      this.routeParamsSubscribe = this.route.params.subscribe(
+      this.route.params.subscribe(
         (params: { pool: string, name: string, snap: string }) => {
           const poolName = params.pool;
           const rbdName = params.name;
@@ -220,32 +219,34 @@ export class RbdFormComponent implements OnInit {
           this.setFeatures(defaultFeatures);
         });
     }
-    this.poolService.list(['pool_name', 'type', 'flags_names', 'application_metadata']).then(
-      resp => {
-        const pools = [];
-        const dataPools = [];
-        for (const pool of resp) {
-          if (_.indexOf(pool.application_metadata, 'rbd') !== -1) {
-            if (pool.type === 'replicated') {
-              pools.push(pool);
-              dataPools.push(pool);
-            } else if (pool.type === 'erasure' &&
-              pool.flags_names.indexOf('ec_overwrites') !== -1) {
-              dataPools.push(pool);
+    if (this.mode !== this.rbdFormMode.editing) {
+      this.poolService.list(['pool_name', 'type', 'flags_names', 'application_metadata']).then(
+        resp => {
+          const pools = [];
+          const dataPools = [];
+          for (const pool of resp) {
+            if (_.indexOf(pool.application_metadata, 'rbd') !== -1) {
+              if (pool.type === 'replicated') {
+                pools.push(pool);
+                dataPools.push(pool);
+              } else if (pool.type === 'erasure' &&
+                pool.flags_names.indexOf('ec_overwrites') !== -1) {
+                dataPools.push(pool);
+              }
             }
           }
+          this.pools = pools;
+          this.allPools = pools;
+          this.dataPools = dataPools;
+          this.allDataPools = dataPools;
+          if (this.pools.length === 1) {
+            const poolName = this.pools[0]['pool_name'];
+            this.rbdForm.get('pool').setValue(poolName);
+            this.onPoolChange(poolName);
+          }
         }
-        this.pools = pools;
-        this.allPools = pools;
-        this.dataPools = dataPools;
-        this.allDataPools = dataPools;
-        if (this.pools.length === 1) {
-          const poolName = this.pools[0]['pool_name'];
-          this.rbdForm.get('pool').setValue(poolName);
-          this.onPoolChange(poolName);
-        }
-      }
-    );
+      );
+    }
     this.deepFlattenFormControl.valueChanges.subscribe((value) => {
       this.watchDataFeatures('deep-flatten', value);
     });

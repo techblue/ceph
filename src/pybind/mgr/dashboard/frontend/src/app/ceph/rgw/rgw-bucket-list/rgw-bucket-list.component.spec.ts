@@ -1,15 +1,26 @@
-import { HttpClientModule } from '@angular/common/http';
-import { async, ComponentFixture, TestBed } from '@angular/core/testing';
+import { Component, Input } from '@angular/core';
+import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { RouterTestingModule } from '@angular/router/testing';
 
-import { BsDropdownModule } from 'ngx-bootstrap';
-import { TabsModule } from 'ngx-bootstrap/tabs';
+import { ModalModule } from 'ngx-bootstrap';
 
 import { RgwBucketService } from '../../../shared/api/rgw-bucket.service';
-import { DataTableModule } from '../../../shared/datatable/datatable.module';
-import { SharedModule } from '../../../shared/shared.module';
-import { RgwBucketDetailsComponent } from '../rgw-bucket-details/rgw-bucket-details.component';
+import { CdTableColumn } from '../../../shared/models/cd-table-column';
+import { CdTableSelection } from '../../../shared/models/cd-table-selection';
+import { configureTestBed } from '../../../shared/unit-test-helper';
 import { RgwBucketListComponent } from './rgw-bucket-list.component';
+
+@Component({ selector: 'cd-rgw-bucket-details', template: '' })
+class RgwBucketDetailsStubComponent {
+  @Input() selection: CdTableSelection;
+}
+
+@Component({ selector: 'cd-table', template: '' })
+class TableStubComponent {
+  @Input() data: any[];
+  @Input() columns: CdTableColumn[];
+  @Input() autoReload: any = 5000;
+}
 
 describe('RgwBucketListComponent', () => {
   let component: RgwBucketListComponent;
@@ -23,24 +34,11 @@ describe('RgwBucketListComponent', () => {
     }
   };
 
-  beforeEach(async(() => {
-    TestBed.configureTestingModule({
-      declarations: [
-        RgwBucketListComponent,
-        RgwBucketDetailsComponent
-      ],
-      imports: [
-        HttpClientModule,
-        RouterTestingModule,
-        BsDropdownModule.forRoot(),
-        TabsModule.forRoot(),
-        DataTableModule,
-        SharedModule
-      ],
-      providers: [{ provide: RgwBucketService, useValue: fakeRgwBucketService }]
-    })
-    .compileComponents();
-  }));
+  configureTestBed({
+    declarations: [RgwBucketListComponent, RgwBucketDetailsStubComponent, TableStubComponent],
+    imports: [RouterTestingModule, ModalModule.forRoot()],
+    providers: [{ provide: RgwBucketService, useValue: fakeRgwBucketService }]
+  });
 
   beforeEach(() => {
     fixture = TestBed.createComponent(RgwBucketListComponent);

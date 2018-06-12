@@ -126,6 +126,9 @@
 /* Define if using NSS. */
 #cmakedefine USE_NSS
 
+/* Define if using OpenSSL. */
+#cmakedefine USE_OPENSSL
+
 /* Accelio conditional compilation */
 #cmakedefine HAVE_XIO
 
@@ -138,9 +141,6 @@
 
 /* define if bluestore enabled */
 #cmakedefine WITH_BLUESTORE
-
-/* define if embedded enabled */
-#cmakedefine WITH_EMBEDDED
 
 /* define if cephfs enabled */
 #cmakedefine WITH_CEPHFS
@@ -344,5 +344,8 @@
 
 /* Defined if Intel QAT compress/decompress is supported */
 #cmakedefine HAVE_QATZIP
+
+/* Define if seastar is available. */
+#cmakedefine HAVE_SEASTAR
 
 #endif /* CONFIG_H */

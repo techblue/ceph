@@ -27,6 +27,7 @@
 #include "Mutation.h"
 
 #include "include/filepath.h"
+#include "common/likely.h"
 
 #include "events/EExport.h"
 #include "events/EImportStart.h"
@@ -118,7 +119,12 @@ void Migrator::dispatch(Message *m)
     handle_export_prep(static_cast<MExportDirPrep*>(m));
     break;
   case MSG_MDS_EXPORTDIR:
-    handle_export_dir(static_cast<MExportDir*>(m));
+    if (unlikely(inject_session_race)) {
+      dout(0) << "waiting for inject_session_race" << dendl;
+      mds->wait_for_any_client_connection(new C_MDS_RetryMessage(mds, m));
+    } else {
+      handle_export_dir(static_cast<MExportDir*>(m));
+    }
     break;
   case MSG_MDS_EXPORTDIRFINISH:
     handle_export_finish(static_cast<MExportDirFinish*>(m));
@@ -149,6 +155,9 @@ void Migrator::dispatch(Message *m)
     // caps
   case MSG_MDS_EXPORTCAPS:
     handle_export_caps(static_cast<MExportCaps*>(m));
+    break;
+  case MSG_MDS_EXPORTCAPSACK:
+    handle_export_caps_ack(static_cast<MExportCapsAck*>(m));
     break;
   case MSG_MDS_GATHERCAPS:
     handle_gather_caps(static_cast<MGatherCaps*>(m));
@@ -1739,7 +1748,7 @@ void Migrator::handle_export_ack(MExportDirAck *m)
   assert(it->second.state == EXPORT_EXPORTING);
   assert(it->second.tid == m->get_tid());
 
-  bufferlist::iterator bp = m->imported_caps.begin();
+  auto bp = m->imported_caps.cbegin();
   decode(it->second.peer_imported, bp);
 
   it->second.state = EXPORT_LOGGINGFINISH;
@@ -2246,7 +2255,7 @@ void Migrator::handle_export_prep(MExportDirPrep *m)
     assert(it->second.peer == oldauth);
     diri = cache->get_inode(m->get_dirfrag().ino);
     assert(diri);
-    bufferlist::iterator p = m->basedir.begin();
+    auto p = m->basedir.cbegin();
     dir = cache->add_replica_dir(p, diri, oldauth, finished);
     dout(7) << "handle_export_prep on " << *dir << " (first pass)" << dendl;
   } else {
@@ -2302,7 +2311,7 @@ void Migrator::handle_export_prep(MExportDirPrep *m)
     for (list<bufferlist>::iterator p = m->traces.begin();
 	 p != m->traces.end();
 	 ++p) {
-      bufferlist::iterator q = p->begin();
+      auto q = p->cbegin();
       dirfrag_t df;
       decode(df, q);
       char start;
@@ -2489,14 +2498,14 @@ void Migrator::handle_export_dir(MExportDir *m)
 
   // new client sessions, open these after we journal
   // include imported sessions in EImportStart
-  bufferlist::iterator cmp = m->client_map.begin();
+  auto cmp = m->client_map.cbegin();
   map<client_t,entity_inst_t> client_map;
   decode(client_map, cmp);
   assert(cmp.end());
   le->cmapv = mds->server->prepare_force_open_sessions(client_map, onlogged->imported_session_map);
   encode(client_map, le->client_map, mds->mdsmap->get_up_features());
 
-  bufferlist::iterator blp = m->export_data.begin();
+  auto blp = m->export_data.cbegin();
   int num_imported_inodes = 0;
   while (!blp.end()) {
     num_imported_inodes += 
@@ -2975,7 +2984,7 @@ void Migrator::import_finish(CDir *dir, bool notify, bool last)
 }
 
 
-void Migrator::decode_import_inode(CDentry *dn, bufferlist::iterator& blp,
+void Migrator::decode_import_inode(CDentry *dn, bufferlist::const_iterator& blp,
 				   mds_rank_t oldauth, LogSegment *ls,
 				   map<CInode*, map<client_t,Capability::Export> >& peer_exports,
 				   list<ScatterLock*>& updated_scatterlocks)
@@ -3044,7 +3053,7 @@ void Migrator::decode_import_inode(CDentry *dn, bufferlist::iterator& blp,
 }
 
 void Migrator::decode_import_inode_caps(CInode *in, bool auth_cap,
-					bufferlist::iterator &blp,
+					bufferlist::const_iterator &blp,
 					map<CInode*, map<client_t,Capability::Export> >& peer_exports)
 {
   map<client_t,Capability::Export> cap_map;
@@ -3086,10 +3095,16 @@ void Migrator::finish_import_inode_caps(CInode *in, mds_rank_t peer, bool auth_c
 	cap->mark_importing();
     }
 
-    Capability::Import& im = import_map[it.first];
-    im.cap_id = cap->get_cap_id();
-    im.mseq = auth_cap ? it.second.mseq : cap->get_mseq();
-    im.issue_seq = cap->get_last_seq() + 1;
+    // Always ask exporter mds to send cap export messages for auth caps.
+    // For non-auth caps, ask exporter mds to send cap export messages to
+    // clients who haven't opened sessions. The cap export messages will
+    // make clients open sessions.
+    if (auth_cap || session->connection == nullptr) {
+      Capability::Import& im = import_map[it.first];
+      im.cap_id = cap->get_cap_id();
+      im.mseq = auth_cap ? it.second.mseq : cap->get_mseq();
+      im.issue_seq = cap->get_last_seq() + 1;
+    }
 
     if (peer >= 0) {
       cap->merge(it.second, auth_cap);
@@ -3105,7 +3120,7 @@ void Migrator::finish_import_inode_caps(CInode *in, mds_rank_t peer, bool auth_c
   }
 }
 
-int Migrator::decode_import_dir(bufferlist::iterator& blp,
+int Migrator::decode_import_dir(bufferlist::const_iterator& blp,
 				mds_rank_t oldauth,
 				CDir *import_root,
 				EImportStart *le,
@@ -3295,16 +3310,55 @@ void Migrator::export_caps(CInode *in)
   mds->send_message_mds(ex, dest);
 }
 
+/* This function DOES put the passed message before returning*/
+void Migrator::handle_export_caps_ack(MExportCapsAck *ack)
+{
+  mds_rank_t from = ack->get_source().num();
+  CInode *in = cache->get_inode(ack->ino);
+  if (in) {
+    assert(!in->is_auth());
+
+    dout(10) << "handle_export_caps_ack " << *ack << " from "
+	     << ack->get_source() << " on " << *in << dendl;
+
+    map<client_t,Capability::Import> imported_caps;
+    map<client_t,uint64_t> caps_ids;
+    auto blp = ack->cap_bl.cbegin();
+    decode(imported_caps, blp);
+    decode(caps_ids, blp);
+
+    for (auto& it : imported_caps) {
+      Capability *cap = in->get_client_cap(it.first);
+      if (!cap || cap->get_cap_id() != caps_ids.at(it.first))
+	continue;
+
+      dout(7) << __func__ << " telling client." << it.first
+	      << " exported caps on " << *in << dendl;
+      MClientCaps *m = new MClientCaps(CEPH_CAP_OP_EXPORT, in->ino(), 0,
+				       cap->get_cap_id(), cap->get_mseq(),
+				       mds->get_osd_epoch_barrier());
+      m->set_cap_peer(it.second.cap_id, it.second.issue_seq, it.second.mseq, from, 0);
+      mds->send_message_client_counted(m, it.first);
+
+      in->remove_client_cap(it.first);
+    }
+
+    mds->locker->request_inode_file_caps(in);
+    mds->locker->try_eval(in, CEPH_CAP_LOCKS);
+  }
+
+  ack->put();
+}
+
 void Migrator::handle_gather_caps(MGatherCaps *m)
 {
   CInode *in = cache->get_inode(m->ino);
-
   if (!in)
     goto out;
 
   dout(10) << "handle_gather_caps " << *m << " from " << m->get_source()
-           << " on " << *in
-	   << dendl;
+           << " on " << *in << dendl;
+
   if (in->is_any_caps() &&
       !in->is_auth() &&
       !in->is_ambiguous_auth() &&
@@ -3338,8 +3392,11 @@ void Migrator::handle_export_caps(MExportCaps *ex)
   assert(in->is_auth());
 
   // FIXME
-  if (!in->can_auth_pin())
+  if (!in->can_auth_pin()) {
+    ex->put();
     return;
+  }
+
   in->auth_pin(this);
 
   map<client_t,entity_inst_t> client_map;
@@ -3351,7 +3408,7 @@ void Migrator::handle_export_caps(MExportCaps *ex)
   version_t pv = mds->server->prepare_force_open_sessions(client_map,
 							  finish->imported_session_map);
   // decode new caps
-  bufferlist::iterator blp = ex->cap_bl.begin();
+  auto blp = ex->cap_bl.cbegin();
   decode_import_inode_caps(in, false, blp, finish->peer_exports);
   assert(!finish->peer_exports.empty());   // thus, inode is pinned.
 
@@ -3377,13 +3434,34 @@ void Migrator::logged_import_caps(CInode *in,
   // force open client sessions and finish cap import
   mds->server->finish_force_open_sessions(imported_session_map);
 
-  map<client_t,Capability::Import> imported_caps;
-
   auto it = peer_exports.find(in);
   assert(it != peer_exports.end());
 
   // clients will release caps from the exporter when they receive the cap import message.
+  map<client_t,Capability::Import> imported_caps;
   finish_import_inode_caps(in, from, false, imported_session_map, it->second, imported_caps);
   mds->locker->eval(in, CEPH_CAP_LOCKS, true);
+
+  if (!imported_caps.empty()) {
+    MExportCapsAck *ack = new MExportCapsAck(in->ino());
+    map<client_t,uint64_t> peer_caps_ids;
+    for (auto &p : imported_caps )
+      peer_caps_ids[p.first] = it->second.at(p.first).cap_id;
+
+    encode(imported_caps, ack->cap_bl);
+    encode(peer_caps_ids, ack->cap_bl);
+    mds->send_message_mds(ack, from);
+  }
+
   in->auth_unpin(this);
+}
+
+void Migrator::handle_conf_change(const struct md_config_t *conf,
+                                  const std::set <std::string> &changed,
+                                  const MDSMap &mds_map)
+{
+  if (changed.count("mds_inject_migrator_session_race")) {
+    inject_session_race = conf->get_val<bool>("mds_inject_migrator_session_race");
+    dout(0) << "mds_inject_migrator_session_race is " << inject_session_race << dendl;
+  }
 }

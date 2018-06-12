@@ -1334,7 +1334,7 @@ function test_mon_osd_create_destroy()
   expect_false ceph auth get-key client.osd-lockbox.$uuid2
   expect_false ceph config-key exists dm-crypt/osd/$uuid2/luks
 
-  ceph osd destroy osd.$id2 --yes-i-really-mean-it
+  ceph osd destroy-new osd.$id2 --yes-i-really-mean-it
   ceph osd destroy $id2 --yes-i-really-mean-it
   ceph osd find $id2
   expect_false ceph auth get-key osd.$id2
@@ -1468,7 +1468,7 @@ function test_mon_osd()
   expect_false ceph osd unset sortbitwise  # cannot be unset
   expect_false ceph osd set bogus
   expect_false ceph osd unset bogus
-  ceph osd require-osd-release mimic
+  ceph osd require-osd-release nautilus
   # can't lower (or use new command for anything but jewel)
   expect_false ceph osd require-osd-release jewel
   # these are no-ops but should succeed.
@@ -1785,8 +1785,8 @@ function test_mon_osd_pool_quota()
   #
   # get quotas
   #
-  ceph osd pool get-quota tmp-quota-pool | grep 'max bytes.*10B'
-  ceph osd pool get-quota tmp-quota-pool | grep 'max objects.*10M objects'
+  ceph osd pool get-quota tmp-quota-pool | grep 'max bytes.*10 B'
+  ceph osd pool get-quota tmp-quota-pool | grep 'max objects.*10 M objects'
   #
   # set valid quotas with unit prefix
   #
@@ -1794,7 +1794,7 @@ function test_mon_osd_pool_quota()
   #
   # get quotas
   #
-  ceph osd pool get-quota tmp-quota-pool | grep 'max bytes.*10Ki'
+  ceph osd pool get-quota tmp-quota-pool | grep 'max bytes.*10 Ki'
   #
   # set valid quotas with unit prefix
   #
@@ -1802,7 +1802,7 @@ function test_mon_osd_pool_quota()
   #
   # get quotas
   #
-  ceph osd pool get-quota tmp-quota-pool | grep 'max bytes.*10Ki'
+  ceph osd pool get-quota tmp-quota-pool | grep 'max bytes.*10 Ki'
   #
   #
   # reset pool quotas

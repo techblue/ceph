@@ -4,20 +4,40 @@ from __future__ import absolute_import
 import json
 import cherrypy
 
-from . import ApiController, BaseController, RESTController, AuthRequired
+from . import ApiController, BaseController, RESTController, AuthRequired, \
+              Endpoint, Proxy
 from .. import logger
 from ..services.ceph_service import CephService
 from ..services.rgw_client import RgwClient
 from ..rest_client import RequestException
 
 
-@ApiController('rgw')
+@ApiController('/rgw')
 @AuthRequired()
-class Rgw(RESTController):
-    pass
+class Rgw(BaseController):
+
+    @Endpoint()
+    def status(self):
+        status = {'available': False, 'message': None}
+        try:
+            instance = RgwClient.admin_instance()
+            # Check if the service is online.
+            if not instance.is_service_online():
+                status['message'] = 'Failed to connect to the Object Gateway\'s Admin Ops API.'
+                raise RequestException(status['message'])
+            # If the API user ID is configured via 'ceph dashboard set-rgw-api-user-id <user_id>'
+            # (which is not mandatory), then ensure it is known by the RGW.
+            if instance.userid and not instance.is_system_user():
+                status['message'] = 'The user "{}" is unknown to the Object Gateway.'.format(
+                    instance.userid)
+                raise RequestException(status['message'])
+            status['available'] = True
+        except RequestException:
+            pass
+        return status
 
 
-@ApiController('rgw/daemon')
+@ApiController('/rgw/daemon')
 @AuthRequired()
 class RgwDaemon(RESTController):
 
@@ -64,11 +84,11 @@ class RgwDaemon(RESTController):
         return daemon
 
 
-@ApiController('rgw/proxy/{path:.*}')
+@ApiController('/rgw/proxy')
 @AuthRequired()
 class RgwProxy(BaseController):
 
-    @cherrypy.expose
+    @Proxy()
     def __call__(self, path, **params):
         try:
             rgw_client = RgwClient.admin_instance()
@@ -89,7 +109,7 @@ class RgwProxy(BaseController):
             return json.dumps({'detail': str(e)}).encode('utf-8')
 
 
-@ApiController('rgw/bucket')
+@ApiController('/rgw/bucket')
 @AuthRequired()
 class RgwBucket(RESTController):
 

@@ -1,14 +1,14 @@
 import { HttpClientTestingModule } from '@angular/common/http/testing';
-import { async, ComponentFixture, TestBed } from '@angular/core/testing';
+import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { FormControl, ReactiveFormsModule } from '@angular/forms';
 import { RouterTestingModule } from '@angular/router/testing';
 
 import { BsModalService } from 'ngx-bootstrap/modal';
-import 'rxjs/add/observable/of';
-import { Observable } from 'rxjs/Observable';
+import { of as observableOf } from 'rxjs';
 
 import { RgwUserService } from '../../../shared/api/rgw-user.service';
 import { SharedModule } from '../../../shared/shared.module';
+import { configureTestBed } from '../../../shared/unit-test-helper';
 import { RgwUserFormComponent } from './rgw-user-form.component';
 
 describe('RgwUserFormComponent', () => {
@@ -18,26 +18,23 @@ describe('RgwUserFormComponent', () => {
 
   class MockRgwUserService extends RgwUserService {
     enumerate() {
-      return Observable.of(queryResult);
+      return observableOf(queryResult);
     }
   }
 
-  beforeEach(async(() => {
-    TestBed.configureTestingModule({
-      declarations: [ RgwUserFormComponent ],
-      imports: [
-        HttpClientTestingModule,
-        ReactiveFormsModule,
-        RouterTestingModule,
-        SharedModule
-      ],
-      providers: [
-        BsModalService,
-        { provide: RgwUserService, useClass: MockRgwUserService }
-      ]
-    })
-    .compileComponents();
-  }));
+  configureTestBed({
+    declarations: [ RgwUserFormComponent ],
+    imports: [
+      HttpClientTestingModule,
+      ReactiveFormsModule,
+      RouterTestingModule,
+      SharedModule
+    ],
+    providers: [
+      BsModalService,
+      { provide: RgwUserService, useClass: MockRgwUserService }
+    ]
+  });
 
   beforeEach(() => {
     fixture = TestBed.createComponent(RgwUserFormComponent);

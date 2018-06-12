@@ -102,9 +102,13 @@ public:
   }
 
   // -- cons --
-  Migrator(MDSRank *m, MDCache *c) : mds(m), cache(c) {}
+  Migrator(MDSRank *m, MDCache *c) : mds(m), cache(c) {
+    inject_session_race = g_conf->get_val<bool>("mds_inject_migrator_session_race");
+  }
 
-
+  void handle_conf_change(const struct md_config_t *conf,
+                          const std::set <std::string> &changed,
+                          const MDSMap &mds_map);
 
 protected:
   // export fun
@@ -190,6 +194,7 @@ protected:
   void handle_export_finish(MExportDirFinish *m);
 
   void handle_export_caps(MExportCaps *m);
+  void handle_export_caps_ack(MExportCapsAck *m);
   void logged_import_caps(CInode *in,
 			  mds_rank_t from,
 			  map<client_t,pair<Session*,uint64_t> >& imported_session_map,
@@ -322,17 +327,17 @@ public:
 
   void export_caps(CInode *in);
 
-  void decode_import_inode(CDentry *dn, bufferlist::iterator& blp,
+  void decode_import_inode(CDentry *dn, bufferlist::const_iterator& blp,
 			   mds_rank_t oldauth, LogSegment *ls,
 			   map<CInode*, map<client_t,Capability::Export> >& cap_imports,
 			   list<ScatterLock*>& updated_scatterlocks);
-  void decode_import_inode_caps(CInode *in, bool auth_cap, bufferlist::iterator &blp,
+  void decode_import_inode_caps(CInode *in, bool auth_cap, bufferlist::const_iterator &blp,
 				map<CInode*, map<client_t,Capability::Export> >& cap_imports);
   void finish_import_inode_caps(CInode *in, mds_rank_t from, bool auth_cap,
 				const map<client_t,pair<Session*,uint64_t> >& smap,
 				const map<client_t,Capability::Export> &export_map,
 				map<client_t,Capability::Import> &import_map);
-  int decode_import_dir(bufferlist::iterator& blp,
+  int decode_import_dir(bufferlist::const_iterator& blp,
 			mds_rank_t oldauth,
 			CDir *import_root,
 			EImportStart *le, 
@@ -347,6 +352,7 @@ public:
 private:
   MDSRank *mds;
   MDCache *cache;
+  bool inject_session_race = false;
 };
 
 #endif

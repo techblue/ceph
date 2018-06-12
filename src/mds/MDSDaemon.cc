@@ -327,32 +327,7 @@ void MDSDaemon::set_up_admin_socket()
 
 void MDSDaemon::clean_up_admin_socket()
 {
-  AdminSocket *admin_socket = g_ceph_context->get_admin_socket();
-  admin_socket->unregister_command("status");
-  admin_socket->unregister_command("dump_ops_in_flight");
-  admin_socket->unregister_command("ops");
-  admin_socket->unregister_command("dump_blocked_ops");
-  admin_socket->unregister_command("dump_historic_ops");
-  admin_socket->unregister_command("dump_historic_ops_by_duration");
-  admin_socket->unregister_command("scrub_path");
-  admin_socket->unregister_command("tag path");
-  admin_socket->unregister_command("flush_path");
-  admin_socket->unregister_command("export dir");
-  admin_socket->unregister_command("dump cache");
-  admin_socket->unregister_command("cache status");
-  admin_socket->unregister_command("dump tree");
-  admin_socket->unregister_command("dump loads");
-  admin_socket->unregister_command("dump snaps");
-  admin_socket->unregister_command("session evict");
-  admin_socket->unregister_command("osdmap barrier");
-  admin_socket->unregister_command("session ls");
-  admin_socket->unregister_command("flush journal");
-  admin_socket->unregister_command("force_readonly");
-  admin_socket->unregister_command("get subtrees");
-  admin_socket->unregister_command("dirfrag split");
-  admin_socket->unregister_command("dirfrag merge");
-  admin_socket->unregister_command("dirfrag ls");
-  admin_socket->unregister_command("openfiles ls");
+  g_ceph_context->get_admin_socket()->unregister_commands(asok_hook);
   delete asok_hook;
   asok_hook = NULL;
 }
@@ -373,6 +348,7 @@ const char** MDSDaemon::get_tracked_conf_keys() const
     "mds_max_purge_ops",
     "mds_max_purge_ops_per_pg",
     "mds_max_purge_files",
+    "mds_inject_migrator_session_race",
     "clog_to_graylog",
     "clog_to_graylog_host",
     "clog_to_graylog_port",
@@ -577,7 +553,8 @@ void MDSDaemon::send_command_reply(MCommand *m, MDSRank *mds_rank,
 				   int r, bufferlist outbl,
 				   std::string_view outs)
 {
-  Session *session = static_cast<Session *>(m->get_connection()->get_priv());
+  auto priv = m->get_connection()->get_priv();
+  auto session = static_cast<Session *>(priv.get());
   assert(session != NULL);
   // If someone is using a closed session for sending commands (e.g.
   // the ceph CLI) then we should feel free to clean up this connection
@@ -593,7 +570,7 @@ void MDSDaemon::send_command_reply(MCommand *m, MDSRank *mds_rank,
     assert(session->is_closed());
     session->connection->mark_disposable();
   }
-  session->put();
+  priv.reset();
 
   MCommandReply *reply = new MCommandReply(r, outs);
   reply->set_tid(m->get_tid());
@@ -604,7 +581,8 @@ void MDSDaemon::send_command_reply(MCommand *m, MDSRank *mds_rank,
 /* This function DOES put the passed message before returning*/
 void MDSDaemon::handle_command(MCommand *m)
 {
-  Session *session = static_cast<Session *>(m->get_connection()->get_priv());
+  auto priv = m->get_connection()->get_priv();
+  auto session = static_cast<Session *>(priv.get());
   assert(session != NULL);
 
   int r = 0;
@@ -632,7 +610,7 @@ void MDSDaemon::handle_command(MCommand *m)
   } else {
     r = _handle_command(cmdmap, m, &outbl, &outs, &run_after, &need_reply);
   }
-  session->put();
+  priv.reset();
 
   if (need_reply) {
     send_command_reply(m, mds_rank, r, outbl, outs);
@@ -816,6 +794,9 @@ int MDSDaemon::_handle_command(
     if (r == 0) {
       cct->_conf->apply_changes(nullptr);
     }
+    if (r == -ENOENT) {
+      r = 0; // idempotent
+    }
   } else if (prefix == "exit") {
     // We will send response before executing
     ss << "Exiting...";
@@ -912,7 +893,7 @@ void MDSDaemon::handle_mds_map(MMDSMap *m)
   mds_rank_t whoami = mdsmap->get_rank_gid(mds_gid_t(monc->get_global_id()));
 
   // verify compatset
-  CompatSet mdsmap_compat(get_mdsmap_compat_set_all());
+  CompatSet mdsmap_compat(MDSMap::get_compat_set_all());
   dout(10) << "     my compat " << mdsmap_compat << dendl;
   dout(10) << " mdsmap compat " << mdsmap->compat << dendl;
   if (!mdsmap_compat.writeable(mdsmap->compat)) {
@@ -1246,14 +1227,13 @@ bool MDSDaemon::ms_handle_reset(Connection *con)
   if (beacon.get_want_state() == CEPH_MDS_STATE_DNE)
     return false;
 
-  Session *session = static_cast<Session *>(con->get_priv());
-  if (session) {
+  auto priv = con->get_priv();
+  if (auto session = static_cast<Session *>(priv.get()); session) {
     if (session->is_closed()) {
       dout(3) << "ms_handle_reset closing connection for session " << session->info.inst << dendl;
       con->mark_down();
-      con->set_priv(NULL);
+      con->set_priv(nullptr);
     }
-    session->put();
   } else {
     con->mark_down();
   }
@@ -1275,14 +1255,13 @@ void MDSDaemon::ms_handle_remote_reset(Connection *con)
   if (beacon.get_want_state() == CEPH_MDS_STATE_DNE)
     return;
 
-  Session *session = static_cast<Session *>(con->get_priv());
-  if (session) {
+  auto priv = con->get_priv();
+  if (auto session = static_cast<Session *>(priv.get()); session) {
     if (session->is_closed()) {
       dout(3) << "ms_handle_remote_reset closing connection for session " << session->info.inst << dendl;
       con->mark_down();
-      con->set_priv(NULL);
+      con->set_priv(nullptr);
     }
-    session->put();
   }
 }
 
@@ -1355,12 +1334,15 @@ bool MDSDaemon::ms_verify_authorizer(Connection *con, int peer_type,
       s->info.inst.addr = con->get_peer_addr();
       s->info.inst.name = n;
       dout(10) << " new session " << s << " for " << s->info.inst << " con " << con << dendl;
-      con->set_priv(s);
+      con->set_priv(RefCountedPtr{s, false});
       s->connection = con;
+      if (mds_rank) {
+        mds_rank->kick_waiters_for_any_client_connection();
+      }
     } else {
       dout(10) << " existing session " << s << " for " << s->info.inst << " existing con " << s->connection
 	       << ", new/authorizing con " << con << dendl;
-      con->set_priv(s->get());
+      con->set_priv(RefCountedPtr{s});
 
 
 
@@ -1381,7 +1363,7 @@ bool MDSDaemon::ms_verify_authorizer(Connection *con, int peer_type,
       // Flag for auth providers that don't provide cap strings
       s->auth_caps.set_allow_all();
     } else {
-      bufferlist::iterator p = caps_info.caps.begin();
+      auto p = caps_info.caps.cbegin();
       string auth_cap_str;
       try {
         decode(auth_cap_str, p);
@@ -1416,7 +1398,8 @@ void MDSDaemon::ms_handle_accept(Connection *con)
     return;
   }
 
-  Session *s = static_cast<Session *>(con->get_priv());
+  auto priv = con->get_priv();
+  auto s = static_cast<Session *>(priv.get());
   dout(10) << "ms_handle_accept " << con->get_peer_addr() << " con " << con << " session " << s << dendl;
   if (s) {
     if (s->connection != con) {
@@ -1429,7 +1412,6 @@ void MDSDaemon::ms_handle_accept(Connection *con)
 	s->preopen_out_queue.pop_front();
       }
     }
-    s->put();
   }
 }
 

@@ -67,15 +67,17 @@ EOF
 	 --install /usr/bin/gcc gcc /usr/bin/gcc-${new} 20 \
 	 --slave   /usr/bin/g++ g++ /usr/bin/g++-${new}
 
-    $SUDO update-alternatives \
-	 --install /usr/bin/gcc gcc /usr/bin/gcc-${old} 10 \
-	 --slave   /usr/bin/g++ g++ /usr/bin/g++-${old}
+    if [ -f /usr/bin/g++-${old} ]; then
+      $SUDO update-alternatives \
+  	 --install /usr/bin/gcc gcc /usr/bin/gcc-${old} 10 \
+  	 --slave   /usr/bin/g++ g++ /usr/bin/g++-${old}
+    fi
 
     $SUDO update-alternatives --auto gcc
 
     # cmake uses the latter by default
-    $SUDO ln -nsf /usr/bin/gcc /usr/bin/x86_64-linux-gnu-gcc
-    $SUDO ln -nsf /usr/bin/g++ /usr/bin/x86_64-linux-gnu-g++
+    $SUDO ln -nsf /usr/bin/gcc /usr/bin/$(uname -m)-linux-gnu-gcc
+    $SUDO ln -nsf /usr/bin/g++ /usr/bin/$(uname -m)-linux-gnu-g++
 }
 
 function version_lt {
@@ -333,6 +335,12 @@ find . -name tox.ini | while read ini ; do
     (
         cd $(dirname $ini)
         require=$(ls *requirements.txt 2>/dev/null | sed -e 's/^/-r /')
+        md5=wheelhouse/md5
+        if test "$require"; then
+            if ! test -f $md5 || ! md5sum -c $md5 ; then
+                rm -rf wheelhouse
+            fi
+        fi
         if test "$require" && ! test -d wheelhouse ; then
             for interpreter in python2.7 python3 ; do
                 type $interpreter > /dev/null 2>&1 || continue
@@ -340,6 +348,7 @@ find . -name tox.ini | while read ini ; do
                 populate_wheelhouse "wheel -w $wip_wheelhouse" $require || exit 1
             done
             mv $wip_wheelhouse wheelhouse
+            md5sum *requirements.txt > $md5
         fi
     )
 done

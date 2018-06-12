@@ -1,17 +1,14 @@
 import { HttpClientModule } from '@angular/common/http';
-import { HttpClientTestingModule, HttpTestingController } from '@angular/common/http/testing';
-import { inject, TestBed } from '@angular/core/testing';
+import { HttpClientTestingModule } from '@angular/common/http/testing';
+import { inject } from '@angular/core/testing';
 
-import { appendFile } from 'fs';
-
+import { configureTestBed } from '../unit-test-helper';
 import { DashboardService } from './dashboard.service';
 
 describe('DashboardService', () => {
-  beforeEach(() => {
-    TestBed.configureTestingModule({
-      providers: [DashboardService],
-      imports: [HttpClientTestingModule, HttpClientModule]
-    });
+  configureTestBed({
+    providers: [DashboardService],
+    imports: [HttpClientTestingModule, HttpClientModule]
   });
 
   it(

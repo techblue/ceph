@@ -23,7 +23,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "get_user_info"; }
+  const char* name() const override { return "get_user_info"; }
 };
 
 void RGWOp_User_Info::execute()
@@ -68,7 +68,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "create_user"; }
+  const char* name() const override { return "create_user"; }
 };
 
 void RGWOp_User_Create::execute()
@@ -196,7 +196,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "modify_user"; }
+  const char* name() const override { return "modify_user"; }
 };
 
 void RGWOp_User_Modify::execute()
@@ -212,7 +212,7 @@ void RGWOp_User_Modify::execute()
   bool gen_key;
   bool suspended;
   bool system;
-
+  bool email_set;
   bool quota_set;
   int32_t max_buckets;
 
@@ -222,7 +222,7 @@ void RGWOp_User_Modify::execute()
   rgw_user uid(uid_str);
 
   RESTArgs::get_string(s, "display-name", display_name, &display_name);
-  RESTArgs::get_string(s, "email", email, &email);
+  RESTArgs::get_string(s, "email", email, &email, &email_set);
   RESTArgs::get_string(s, "access-key", access_key, &access_key);
   RESTArgs::get_string(s, "secret-key", secret_key, &secret_key);
   RESTArgs::get_string(s, "user-caps", caps, &caps);
@@ -241,7 +241,10 @@ void RGWOp_User_Modify::execute()
 
   op_state.set_user_id(uid);
   op_state.set_display_name(display_name);
-  op_state.set_user_email(email);
+
+  if (email_set)
+    op_state.set_user_email(email);
+
   op_state.set_caps(caps);
   op_state.set_access_key(access_key);
   op_state.set_secret_key(secret_key);
@@ -282,7 +285,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "remove_user"; }
+  const char* name() const override { return "remove_user"; }
 };
 
 void RGWOp_User_Remove::execute()
@@ -317,7 +320,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "create_subuser"; }
+  const char* name() const override { return "create_subuser"; }
 };
 
 void RGWOp_Subuser_Create::execute()
@@ -387,7 +390,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "modify_subuser"; }
+  const char* name() const override { return "modify_subuser"; }
 };
 
 void RGWOp_Subuser_Modify::execute()
@@ -448,7 +451,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "remove_subuser"; }
+  const char* name() const override { return "remove_subuser"; }
 };
 
 void RGWOp_Subuser_Remove::execute()
@@ -485,7 +488,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "create_access_key"; }
+  const char* name() const override { return "create_access_key"; }
 };
 
 void RGWOp_Key_Create::execute()
@@ -541,7 +544,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "remove_access_key"; }
+  const char* name() const override { return "remove_access_key"; }
 };
 
 void RGWOp_Key_Remove::execute()
@@ -588,7 +591,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "add_user_caps"; }
+  const char* name() const override { return "add_user_caps"; }
 };
 
 void RGWOp_Caps_Add::execute()
@@ -620,7 +623,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "remove_user_caps"; }
+  const char* name() const override { return "remove_user_caps"; }
 };
 
 void RGWOp_Caps_Remove::execute()
@@ -671,7 +674,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "get_quota_info"; }
+  const char* name() const override { return "get_quota_info"; }
 };
 
 
@@ -743,7 +746,7 @@ public:
 
   void execute() override;
 
-  const string name() override { return "set_quota_info"; }
+  const char* name() const override { return "set_quota_info"; }
 };
 
 /**

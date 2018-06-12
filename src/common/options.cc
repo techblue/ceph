@@ -807,11 +807,11 @@ std::vector<Option> get_global_options() {
     Option("keyring", Option::TYPE_STR, Option::LEVEL_ADVANCED)
     .set_default(
       "/etc/ceph/$cluster.$name.keyring,/etc/ceph/$cluster.keyring,"
-      "/etc/ceph/keyring,/etc/ceph/keyring.bin," 
+      "/etc/ceph/keyring,/etc/ceph/keyring.bin,"
   #if defined(__FreeBSD)
       "/usr/local/etc/ceph/$cluster.$name.keyring,"
       "/usr/local/etc/ceph/$cluster.keyring,"
-      "/usr/local/etc/ceph/keyring,/usr/local/etc/ceph/keyring.bin," 
+      "/usr/local/etc/ceph/keyring,/usr/local/etc/ceph/keyring.bin,"
   #endif
     )
     .set_description("Path to a keyring file.")
@@ -1674,6 +1674,11 @@ std::vector<Option> get_global_options() {
     .set_description(""),
 
     Option("mon_debug_no_require_mimic", Option::TYPE_BOOL, Option::LEVEL_DEV)
+    .set_default(false)
+    .set_flag(Option::FLAG_CLUSTER_CREATE)
+    .set_description(""),
+
+    Option("mon_debug_no_require_nautilus", Option::TYPE_BOOL, Option::LEVEL_DEV)
     .set_default(false)
     .set_flag(Option::FLAG_CLUSTER_CREATE)
     .set_description(""),
@@ -3096,11 +3101,11 @@ std::vector<Option> get_global_options() {
     .set_description(""),
 
     Option("osd_class_load_list", Option::TYPE_STR, Option::LEVEL_ADVANCED)
-    .set_default("cephfs hello journal lock log numops " "otp rbd refcount replica_log rgw statelog timeindex user version")
+    .set_default("cephfs hello journal lock log numops " "otp rbd refcount rgw statelog timeindex user version")
     .set_description(""),
 
     Option("osd_class_default_list", Option::TYPE_STR, Option::LEVEL_ADVANCED)
-    .set_default("cephfs hello journal lock log numops " "otp rbd refcount replica_log rgw statelog timeindex user version")
+    .set_default("cephfs hello journal lock log numops " "otp rbd refcount rgw statelog timeindex user version")
     .set_description(""),
 
     Option("osd_check_for_log_corruption", Option::TYPE_BOOL, Option::LEVEL_ADVANCED)
@@ -3161,7 +3166,7 @@ std::vector<Option> get_global_options() {
     .set_description("Number of entries difference above which to use asynchronous recovery when appropriate"),
 
     Option("osd_max_pg_per_osd_hard_ratio", Option::TYPE_FLOAT, Option::LEVEL_ADVANCED)
-    .set_default(2)
+    .set_default(3)
     .set_min(1)
     .set_description("Maximum number of PG per OSD, a factor of 'mon_max_pg_per_osd'")
     .set_long_description("OSD will refuse to instantiate PG if the number of PG it serves exceeds this number.")
@@ -3236,10 +3241,6 @@ std::vector<Option> get_global_options() {
 
     Option("osd_debug_verify_missing_on_start", Option::TYPE_BOOL, Option::LEVEL_DEV)
     .set_default(false)
-    .set_description(""),
-
-    Option("osd_debug_scrub_chance_rewrite_digest", Option::TYPE_UINT, Option::LEVEL_DEV)
-    .set_default(0)
     .set_description(""),
 
     Option("osd_debug_verify_snaps", Option::TYPE_BOOL, Option::LEVEL_DEV)
@@ -3489,7 +3490,9 @@ std::vector<Option> get_global_options() {
     .set_description("The block size for index partitions. (0 = rocksdb default)"),
 
     Option("mon_rocksdb_options", Option::TYPE_STR, Option::LEVEL_ADVANCED)
-    .set_default("write_buffer_size=33554432,compression=kNoCompression")
+    .set_default("write_buffer_size=33554432,"
+		 "compression=kNoCompression,"
+		 "level_compaction_dynamic_level_bytes=true")
     .set_description(""),
 
     Option("osd_client_op_priority", Option::TYPE_UINT, Option::LEVEL_ADVANCED)
@@ -3582,8 +3585,9 @@ std::vector<Option> get_global_options() {
 
     Option("osd_objectstore", Option::TYPE_STR, Option::LEVEL_ADVANCED)
     .set_default("filestore")
+    .set_enum_allowed({"bluestore", "filestore", "memstore", "kstore"})
     .set_flag(Option::FLAG_CREATE)
-    .set_description(""),
+    .set_description("backend type for an OSD (like filestore or bluestore)"),
 
     Option("osd_objectstore_tracing", Option::TYPE_BOOL, Option::LEVEL_ADVANCED)
     .set_default(false)
@@ -3737,7 +3741,7 @@ std::vector<Option> get_global_options() {
     .set_description(""),
 
     Option("bluefs_allocator", Option::TYPE_STR, Option::LEVEL_DEV)
-    .set_default("stupid")
+    .set_default("bitmap")
     .set_description(""),
 
     Option("bluefs_preextend_wal_files", Option::TYPE_BOOL, Option::LEVEL_ADVANCED)
@@ -4044,15 +4048,21 @@ std::vector<Option> get_global_options() {
     .add_see_also("bluestore_cache_size")
     .set_description("Ratio of bluestore cache to devote to kv database (rocksdb)"),
 
-    Option("bluestore_cache_kv_min", Option::TYPE_INT, Option::LEVEL_ADVANCED)
-    .set_default(512_M)
-    .set_description("Minimum memory (bytes) of bluestore_cache_size to devote to kv database (rocksdb)")
+    Option("bluestore_cache_autotune", Option::TYPE_BOOL, Option::LEVEL_ADVANCED)
+    .set_default(true)
     .add_see_also("bluestore_cache_size")
-    .set_long_description("A negative value means using bluestore_cache_meta_ratio "
-      "and bluestore_cache_kv_ratio instead of calculating these ratios using "
-      "bluestore_cache_size_* and bluestore_cache_kv_min.  If "
-      "bluestore_cache_size is below bluestore_cache_kv_min "
-      "then this option has no effect."),
+    .add_see_also("bluestore_cache_meta_ratio")
+    .set_description("Automatically tune the ratio of caches while respecting min values."),
+
+    Option("bluestore_cache_autotune_chunk_size", Option::TYPE_UINT, Option::LEVEL_ADVANCED)
+    .set_default(33554432)
+    .add_see_also("bluestore_cache_autotune")
+    .set_description("The chunk size in bytes to allocate to caches when cache autotune is enabled."),
+
+    Option("bluestore_cache_autotune_interval", Option::TYPE_FLOAT, Option::LEVEL_ADVANCED)
+    .set_default(5)
+    .add_see_also("bluestore_cache_autotune")
+    .set_description("The number of seconds to wait between rebalances when cache autotune is enabled."),
 
     Option("bluestore_kvbackend", Option::TYPE_STR, Option::LEVEL_DEV)
     .set_default("rocksdb")
@@ -4060,7 +4070,7 @@ std::vector<Option> get_global_options() {
     .set_description("Key value database to use for bluestore"),
 
     Option("bluestore_allocator", Option::TYPE_STR, Option::LEVEL_ADVANCED)
-    .set_default("stupid")
+    .set_default("bitmap")
     .set_enum_allowed({"bitmap", "stupid"})
     .set_description("Allocator policy"),
 
@@ -4533,6 +4543,22 @@ std::vector<Option> get_global_options() {
     .set_default(0)
     .set_description(""),
 
+    Option("filestore_queue_max_delay_multiple_bytes", Option::TYPE_FLOAT, Option::LEVEL_DEV)
+    .set_default(0)
+    .set_description(""),
+
+    Option("filestore_queue_high_delay_multiple_bytes", Option::TYPE_FLOAT, Option::LEVEL_DEV)
+    .set_default(0)
+    .set_description(""),
+
+    Option("filestore_queue_max_delay_multiple_ops", Option::TYPE_FLOAT, Option::LEVEL_DEV)
+    .set_default(0)
+    .set_description(""),
+
+    Option("filestore_queue_high_delay_multiple_ops", Option::TYPE_FLOAT, Option::LEVEL_DEV)
+    .set_default(0)
+    .set_description(""),
+
     Option("filestore_queue_low_threshhold", Option::TYPE_FLOAT, Option::LEVEL_DEV)
     .set_default(0.3)
     .set_description(""),
@@ -4723,7 +4749,7 @@ std::vector<Option> get_global_options() {
     .set_description("Filesystem path to manager modules."),
 
     Option("mgr_initial_modules", Option::TYPE_STR, Option::LEVEL_BASIC)
-    .set_default("restful status balancer")
+    .set_default("restful status balancer iostat")
     .set_flag(Option::FLAG_NO_MON_UPDATE)
     .set_flag(Option::FLAG_CLUSTER_CREATE)
     .add_service("mon")
@@ -5032,6 +5058,10 @@ std::vector<Option> get_rgw_options() {
     .set_default(60)
     .set_description(""),
 
+    Option("rgw_lc_thread_delay", Option::TYPE_INT, Option::LEVEL_ADVANCED)
+    .set_default(0)
+    .set_description("Delay after processing of bucket listing chunks (i.e., per 1000 entries) in milliseconds"),
+
     Option("rgw_lc_max_objs", Option::TYPE_INT, Option::LEVEL_ADVANCED)
     .set_default(32)
     .set_description("Number of lifecycle data shards")
@@ -5058,6 +5088,12 @@ std::vector<Option> get_rgw_options() {
     Option("rgw_request_uri", Option::TYPE_STR, Option::LEVEL_DEV)
     .set_default("")
     .set_description(""),
+
+    Option("rgw_ignore_get_invalid_range", Option::TYPE_BOOL, Option::LEVEL_ADVANCED)
+    .set_default(false)
+    .set_description("Treat invalid (e.g., negative) range request as full")
+    .set_long_description("Treat invalid (e.g., negative) range request "
+			  "as request for the full object (AWS compatibility)"),
 
     Option("rgw_swift_url", Option::TYPE_STR, Option::LEVEL_ADVANCED)
     .set_default("")
@@ -5745,10 +5781,6 @@ std::vector<Option> get_rgw_options() {
 
     Option("rgw_data_log_obj_prefix", Option::TYPE_STR, Option::LEVEL_DEV)
     .set_default("data_log")
-    .set_description(""),
-
-    Option("rgw_replica_log_obj_prefix", Option::TYPE_STR, Option::LEVEL_DEV)
-    .set_default("replica_log")
     .set_description(""),
 
     Option("rgw_bucket_quota_ttl", Option::TYPE_INT, Option::LEVEL_ADVANCED)
@@ -6467,9 +6499,9 @@ static std::vector<Option> get_rbd_mirror_options() {
     .set_description("number of failed attempts to acquire lock after missing heartbeats before breaking lock"),
 
     Option("rbd_mirror_image_policy_type", Option::TYPE_STR, Option::LEVEL_ADVANCED)
-    .set_default("simple")
-    .set_enum_allowed({"simple"})
-    .set_description("policy type for mapping images to instances"),
+    .set_default("none")
+    .set_enum_allowed({"none", "simple"})
+    .set_description("active/active policy type for mapping images to instances"),
 
     Option("rbd_mirror_image_policy_migration_throttle", Option::TYPE_INT, Option::LEVEL_ADVANCED)
     .set_default(300)
@@ -6932,7 +6964,7 @@ std::vector<Option> get_mds_options() {
     Option("mds_client_writeable_range_max_inc_objs", Option::TYPE_UINT, Option::LEVEL_ADVANCED)
     .set_default(1024)
     .set_description("maximum number of objects in writeable range of a file for a client"),
- 
+
     Option("mds_min_caps_per_client", Option::TYPE_UINT, Option::LEVEL_ADVANCED)
     .set_default(100)
     .set_description("minimum number of capabilities a client may hold"),
@@ -6944,6 +6976,9 @@ std::vector<Option> get_mds_options() {
     Option("mds_hack_allow_loading_invalid_metadata", Option::TYPE_BOOL, Option::LEVEL_ADVANCED)
      .set_default(0)
      .set_description("INTENTIONALLY CAUSE DATA LOSS by bypasing checks for invalid metadata on disk. Allows testing repair tools."),
+
+    Option("mds_inject_migrator_session_race", Option::TYPE_BOOL, Option::LEVEL_DEV)
+     .set_default(false),
   });
 }
 

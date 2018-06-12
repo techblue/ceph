@@ -63,6 +63,8 @@ void LogMonitor::create_initial()
   dout(10) << "create_initial -- creating initial map" << dendl;
   LogEntry e;
   e.name = g_conf->name;
+  e.rank = entity_name_t::MON(mon->rank);
+  e.addrs.v.push_back(mon->messenger->get_myaddr());
   e.stamp = ceph_clock_now();
   e.prio = CLOG_INFO;
   std::stringstream ss;
@@ -91,7 +93,7 @@ void LogMonitor::update_from_paxos(bool *need_bootstrap)
     get_version_full(latest_full, latest_bl);
     assert(latest_bl.length() != 0);
     dout(7) << __func__ << " loading summary e" << latest_full << dendl;
-    bufferlist::iterator p = latest_bl.begin();
+    auto p = latest_bl.cbegin();
     decode(summary, p);
     dout(7) << __func__ << " loaded summary e" << summary.version << dendl;
   }
@@ -103,7 +105,7 @@ void LogMonitor::update_from_paxos(bool *need_bootstrap)
     assert(err == 0);
     assert(bl.length());
 
-    bufferlist::iterator p = bl.begin();
+    auto p = bl.cbegin();
     __u8 v;
     decode(v, p);
     while (!p.end()) {
@@ -313,6 +315,7 @@ bool LogMonitor::preprocess_log(MonOpRequestRef op)
   return false;
 
  done:
+  mon->no_reply(op);
   return true;
 }
 
@@ -527,7 +530,8 @@ bool LogMonitor::prepare_command(MonOpRequestRef op)
     vector<string> logtext;
     cmd_getval(g_ceph_context, cmdmap, "logtext", logtext);
     LogEntry le;
-    le.who = m->get_orig_source_inst();
+    le.rank = m->get_orig_source();
+    le.addrs.v.push_back(m->get_orig_source_addr());
     le.name = session->entity_name;
     le.stamp = m->get_recv_stamp();
     le.seq = 0;
@@ -643,7 +647,7 @@ void LogMonitor::_create_sub_incremental(MLog *mlog, int level, version_t sv)
     int err = get_version(sv, bl);
     assert(err == 0);
     assert(bl.length());
-    bufferlist::iterator p = bl.begin();
+    auto p = bl.cbegin();
     __u8 v;
     decode(v,p);
     while (!p.end()) {

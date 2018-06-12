@@ -822,7 +822,7 @@ map<pg_shard_t, ScrubMap *>::const_iterator
       } else {
         ss_bl.push_back(k->second);
         try {
-	  bufferlist::iterator bliter = ss_bl.begin();
+	  auto bliter = ss_bl.cbegin();
 	  decode(ss, bliter);
 	  if (first_ss_bl.length() == 0) {
 	    first_ss_bl.append(ss_bl);
@@ -847,7 +847,7 @@ map<pg_shard_t, ScrubMap *>::const_iterator
       } else {
 	hk_bl.push_back(k->second);
         try {
-	  bufferlist::iterator bliter = hk_bl.begin();
+	  auto bliter = hk_bl.cbegin();
 	  decode(hi, bliter);
 	  if (first_hk_bl.length() == 0) {
 	    first_hk_bl.append(hk_bl);
@@ -872,7 +872,7 @@ map<pg_shard_t, ScrubMap *>::const_iterator
     }
     bl.push_back(k->second);
     try {
-      bufferlist::iterator bliter = bl.begin();
+      auto bliter = bl.cbegin();
       decode(oi, bliter);
     } catch (...) {
       // invalid object info, probably corrupt
@@ -1058,16 +1058,12 @@ void PGBackend::be_compare_scrubmaps(
 	FORCE = 2,
       } update = NO;
 
-      if (auth_object.digest_present && auth_object.omap_digest_present &&
-	  (!auth_oi.is_data_digest() || !auth_oi.is_omap_digest())) {
-	dout(20) << __func__ << " missing digest on " << *k << dendl;
+      if (auth_object.digest_present && !auth_oi.is_data_digest()) {
+	dout(20) << __func__ << " missing data digest on " << *k << dendl;
 	update = MAYBE;
       }
-      if (auth_object.digest_present && auth_object.omap_digest_present &&
-	  cct->_conf->osd_debug_scrub_chance_rewrite_digest &&
-	  (((unsigned)rand() % 100) >
-	   cct->_conf->osd_debug_scrub_chance_rewrite_digest)) {
-	dout(20) << __func__ << " randomly updating digest on " << *k << dendl;
+      if (auth_object.omap_digest_present && !auth_oi.is_omap_digest()) {
+	dout(20) << __func__ << " missing omap digest on " << *k << dendl;
 	update = MAYBE;
       }
 
@@ -1097,13 +1093,14 @@ void PGBackend::be_compare_scrubmaps(
 	utime_t age = now - auth_oi.local_mtime;
 	if (update == FORCE ||
 	    age > cct->_conf->osd_deep_scrub_update_digest_min_age) {
-	  dout(20) << __func__ << " will update digest on " << *k << dendl;
           boost::optional<uint32_t> data_digest, omap_digest;
-          if (auth_oi.is_data_digest()) {
+          if (auth_object.digest_present) {
             data_digest = auth_object.digest;
+	    dout(20) << __func__ << " will update data digest on " << *k << dendl;
           }
-          if (auth_oi.is_omap_digest()) {
+          if (auth_object.omap_digest_present) {
             omap_digest = auth_object.omap_digest;
+	    dout(20) << __func__ << " will update omap digest on " << *k << dendl;
           }
 	  missing_digest[*k] = make_pair(data_digest, omap_digest);
 	} else {

@@ -123,7 +123,7 @@ public:
       state_seq++;
     }
   }
-  void decode(bufferlist::iterator &p);
+  void decode(bufferlist::const_iterator &p);
   void set_client_metadata(std::map<std::string, std::string> const &meta);
   std::string get_human_name() const {return human_name;}
 
@@ -330,7 +330,11 @@ public:
     num_trim_flushes_warnings(0),
     num_trim_requests_warnings(0) { }
   ~Session() override {
-    assert(!item_session_list.is_on_list());
+    if (state == STATE_CLOSED) {
+      item_session_list.remove_myself();
+    } else {
+      assert(!item_session_list.is_on_list());
+    }
     while (!preopen_out_queue.empty()) {
       preopen_out_queue.front()->put();
       preopen_out_queue.pop_front();
@@ -397,7 +401,7 @@ public:
   virtual void encode_header(bufferlist *header_bl);
   virtual void decode_header(bufferlist &header_bl);
   virtual void decode_values(std::map<std::string, bufferlist> &session_vals);
-  virtual void decode_legacy(bufferlist::iterator& blp);
+  virtual void decode_legacy(bufferlist::const_iterator& blp);
   void dump(Formatter *f) const;
 
   void set_rank(mds_rank_t r)
@@ -490,7 +494,7 @@ public:
   }
 
   // sessions
-  void decode_legacy(bufferlist::iterator& blp) override;
+  void decode_legacy(bufferlist::const_iterator& blp) override;
   bool empty() const { return session_map.empty(); }
   const ceph::unordered_map<entity_name_t, Session*> &get_sessions() const
   {

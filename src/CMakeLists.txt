@@ -34,12 +34,13 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wpointer-arith -Werror=format-security -fno
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ftemplate-depth-1024")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wnon-virtual-dtor")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unknown-pragmas")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-ignored-qualifiers")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-unknown-pragmas")
 if(CMAKE_CXX_COMPILER_ID STREQUAL GNU)
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -rdynamic")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wstrict-null-sentinel -Woverloaded-virtual")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-new-ttp-matching")
-  if(NOT WITH_OSD_INSTRUMENT_FUNCTIONS)
+  if(NOT WITH_OSD_INSTRUMENT_FUNCTIONS AND NOT HAVE_SEASTAR)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pie")
   endif()
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL Clang)
@@ -387,6 +388,11 @@ include_directories("${CMAKE_SOURCE_DIR}/src/dmclock/support/src")
 # needed for source files that friend unit tests (e.g., using FRIEND_TEST)
 include_directories(SYSTEM "${CMAKE_SOURCE_DIR}/src/googletest/googletest/include")
 
+if(WITH_SEASTAR)
+  set(SEASTAR_ENABLE_TESTS OFF CACHE BOOL "disable seastar testing")
+  add_subdirectory(seastar)
+endif()
+
 set(xio_common_srcs)
 if(HAVE_XIO)
   list(APPEND xio_common_srcs
@@ -408,6 +414,16 @@ endif(HAVE_RDMA)
 
 add_library(common_buffer_obj OBJECT
   common/buffer.cc)
+
+if(WITH_SEASTAR)
+  add_library(seastar_buffer_obj OBJECT common/buffer_seastar.cc)
+  # target_link_libraries() doesn't work for object libraries, so the
+  # Seastar properties are applied manually (and link is unnecessary)
+  target_compile_definitions(seastar_buffer_obj
+    PUBLIC $<TARGET_PROPERTY:Seastar::seastar,INTERFACE_COMPILE_DEFINITIONS>)
+  target_include_directories(seastar_buffer_obj
+    PUBLIC $<TARGET_PROPERTY:Seastar::seastar,INTERFACE_INCLUDE_DIRECTORIES>)
+endif()
 
 add_library(common_texttable_obj OBJECT
   common/TextTable.cc)
@@ -540,6 +556,7 @@ set(libcommon_files
   common/dns_resolve.cc
   common/hostname.cc
   common/util.cc
+  common/PriorityCache.cc
   librbd/Features.cc
   arch/probe.cc
   ${auth_files}
@@ -642,6 +659,9 @@ set(ceph_common_deps
   ${CRYPTO_LIBS}
   ${CMAKE_THREAD_LIBS_INIT}
   ${CMAKE_DL_LIBS})
+if(HAVE_UDEV)
+  list(APPEND ceph_common_deps ${UDEV_LIBRARIES})
+endif()
 if(HAVE_RDMA)
   list(APPEND ceph_common_deps ${RDMA_LIBRARY})
 endif()
@@ -832,7 +852,6 @@ target_link_libraries(ceph-dencoder
   cls_log_client
   cls_statelog_client
   cls_version_client
-  cls_replica_log_client
   cls_user_client
   cls_journal_client
   cls_timeindex_client
@@ -1044,7 +1063,7 @@ if(WITH_RBD)
   if(WITH_KRBD)
     add_library(krbd STATIC krbd.cc
       $<TARGET_OBJECTS:parse_secret_objs>)
-    target_link_libraries(krbd ${KEYUTILS_LIBRARIES} ${UDEV_LIBRARIES})
+    target_link_libraries(krbd ${KEYUTILS_LIBRARIES})
   endif()
   add_subdirectory(librbd)
   if(WITH_FUSE)
@@ -1101,8 +1120,6 @@ configure_file(
   ${CMAKE_BINARY_DIR}/include/acconfig.h
 )
 
-add_subdirectory(brag)
-
 # Everything you need to spin up a cluster with vstart.sh
 add_custom_target(vstart-base DEPENDS
     ceph-osd
@@ -1127,7 +1144,7 @@ if(WITH_LTTNG)
   add_dependencies(vstart tracepoint_libraries)
 endif(WITH_LTTNG)
 
-if(WITH_MGR_DASHBOARD_FRONTEND AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64")
+if(WITH_MGR AND WITH_MGR_DASHBOARD_FRONTEND AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64")
   add_dependencies(vstart mgr-dashboard-frontend-build)
 endif()
 
@@ -1153,7 +1170,3 @@ if (IS_DIRECTORY "${PROJECT_SOURCE_DIR}/.git")
 endif()
 
 add_subdirectory(script)
-
-if(WITH_EMBEDDED)
-  add_subdirectory(libcephd)
-endif()

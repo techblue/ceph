@@ -196,7 +196,7 @@ void Paxos::collect(version_t oldpn)
     collect->last_committed = last_committed;
     collect->first_committed = first_committed;
     collect->pn = accepted_pn;
-    mon->messenger->send_message(collect, mon->monmap->get_inst(*p));
+    mon->send_mon_message(collect, *p);
   }
 
   // set timeout event
@@ -516,7 +516,7 @@ void Paxos::handle_last(MonOpRequestRef op)
 					MMonPaxos::OP_COMMIT,
 					ceph_clock_now());
       share_state(commit, peer_first_committed[p->first], p->second);
-      mon->messenger->send_message(commit, mon->monmap->get_inst(p->first));
+      mon->send_mon_message(commit, p->first);
     }
   }
 
@@ -650,7 +650,7 @@ void Paxos::begin(bufferlist& v)
   t->dump(&f);
   f.flush(*_dout);
   auto debug_tx(std::make_shared<MonitorDBStore::Transaction>());
-  bufferlist::iterator new_value_it = new_value.begin();
+  auto new_value_it = new_value.cbegin();
   debug_tx->decode(new_value_it);
   debug_tx->dump(&f);
   *_dout << "\nbl dump:\n";
@@ -688,7 +688,7 @@ void Paxos::begin(bufferlist& v)
     begin->last_committed = last_committed;
     begin->pn = accepted_pn;
     
-    mon->messenger->send_message(begin, mon->monmap->get_inst(*p));
+    mon->send_mon_message(begin, *p);
   }
 
   // set timeout event
@@ -914,7 +914,7 @@ void Paxos::commit_finish()
     commit->pn = accepted_pn;
     commit->last_committed = last_committed;
 
-    mon->messenger->send_message(commit, mon->monmap->get_inst(*p));
+    mon->send_mon_message(commit, *p);
   }
 
   assert(g_conf->paxos_kill_at != 9);
@@ -987,7 +987,7 @@ void Paxos::extend_lease()
     lease->last_committed = last_committed;
     lease->lease_timestamp = lease_expire;
     lease->first_committed = first_committed;
-    mon->messenger->send_message(lease, mon->monmap->get_inst(*p));
+    mon->send_mon_message(lease, *p);
   }
 
   // set timeout event.
@@ -1153,7 +1153,7 @@ void Paxos::handle_lease_ack(MonOpRequestRef op)
   } else if (acked_lease.count(from) == 0) {
     acked_lease.insert(from);
     if (ack->feature_map.length()) {
-      auto p = ack->feature_map.begin();
+      auto p = ack->feature_map.cbegin();
       FeatureMap& t = mon->quorum_feature_map[from];
       decode(t, p);
     }

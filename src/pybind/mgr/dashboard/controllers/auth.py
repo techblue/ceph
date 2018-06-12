@@ -8,10 +8,11 @@ import cherrypy
 
 from . import ApiController, RESTController
 from .. import logger, mgr
+from ..exceptions import DashboardException
 from ..tools import Session
 
 
-@ApiController('auth')
+@ApiController('/auth')
 class Auth(RESTController):
     """
     Provide login and logout actions.
@@ -40,13 +41,14 @@ class Auth(RESTController):
             logger.debug('Login successful')
             return {'username': username}
 
-        cherrypy.response.status = 403
         if config_username is None:
             logger.warning('No Credentials configured. Need to call `ceph dashboard '
                            'set-login-credentials <username> <password>` first.')
         else:
             logger.debug('Login failed')
-        return {'detail': 'Invalid credentials'}
+        raise DashboardException(msg='Invalid credentials',
+                                 code='invalid_credentials',
+                                 component='auth')
 
     def bulk_delete(self):
         logger.debug('Logout successful')

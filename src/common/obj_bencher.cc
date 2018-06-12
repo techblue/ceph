@@ -348,7 +348,7 @@ int ObjBencher::fetch_bench_metadata(const std::string& metadata_file,
     }
     return r;
   }
-  bufferlist::iterator p = object_data.begin();
+  auto p = object_data.cbegin();
   decode(*object_size, p);
   decode(*num_objects, p);
   decode(*prevPid, p);
@@ -606,7 +606,7 @@ int ObjBencher::write_bench(int secondsToRun,
     formatter->dump_format("min_iops", "%d", data.idata.min_iops);
     formatter->dump_format("average_latency", "%f", data.avg_latency);
     formatter->dump_format("stddev_latency", "%f", latency_stddev);
-    formatter->dump_format("max_latency:", "%f", data.max_latency);
+    formatter->dump_format("max_latency", "%f", data.max_latency);
     formatter->dump_format("min_latency", "%f", data.min_latency);
   }
   //write object size/number data for read benchmarks

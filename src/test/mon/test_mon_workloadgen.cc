@@ -703,7 +703,8 @@ class OSDStub : public TestStub
     int seq = 0;
     for (; num_entries > 0; --num_entries) {
       LogEntry e;
-      e.who = messenger->get_myinst();
+      e.rank = messenger->get_myname();
+      e.addrs.v.push_back(messenger->get_myaddr());
       e.stamp = now;
       e.seq = seq++;
       e.prio = CLOG_DEBUG;
@@ -819,7 +820,7 @@ class OSDStub : public TestStub
 	dout(5) << __func__
 		<< " full epoch " << start_full << dendl;
 	bufferlist &bl = rit->second;
-	bufferlist::iterator p = bl.begin();
+	auto p = bl.cbegin();
 	osdmap.decode(p);
       }
     }
@@ -835,7 +836,7 @@ class OSDStub : public TestStub
 	       << " on full epoch " << start_full << dendl;
       OSDMap::Incremental inc;
       bufferlist &bl = it->second;
-      bufferlist::iterator p = bl.begin();
+      auto p = bl.cbegin();
       inc.decode(p);
 
       int err = osdmap.apply_incremental(inc);
@@ -853,7 +854,7 @@ class OSDStub : public TestStub
     *_dout << dendl;
 
     if (osdmap.is_up(whoami) &&
-	osdmap.get_addr(whoami) == messenger->get_myaddr()) {
+	osdmap.get_addrs(whoami) == messenger->get_myaddrs()) {
       dout(1) << __func__
 	      << " got into the osdmap and we're up!" << dendl;
     }
@@ -897,11 +898,7 @@ class OSDStub : public TestStub
 
   bool ms_handle_reset(Connection *con) override {
     dout(1) << __func__ << dendl;
-    Session *session = (Session *)con->get_priv();
-    if (!session)
-      return false;
-    session->put();
-    return true;
+    return con->get_priv().get();
   }
 
   bool ms_handle_refused(Connection *con) override {

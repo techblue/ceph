@@ -104,9 +104,11 @@ void MetadataUpdate::finish(int r)
         }
         daemon_meta.erase("hostname");
         state->metadata.clear();
+	map<string,string> m;
         for (const auto &i : daemon_meta) {
-          state->metadata[i.first] = i.second.get_str();
-        }
+          m[i.first] = i.second.get_str();
+	}
+	state->set_metadata(m);
       } else {
         state = std::make_shared<DaemonState>(daemon_state.types);
         state->key = key;
@@ -119,9 +121,11 @@ void MetadataUpdate::finish(int r)
         }
         daemon_meta.erase("hostname");
 
+	map<string,string> m;
         for (const auto &i : daemon_meta) {
-          state->metadata[i.first] = i.second.get_str();
+          m[i.first] = i.second.get_str();
         }
+	state->set_metadata(m);
 
         daemon_state.insert(state);
       }
@@ -170,8 +174,10 @@ std::map<std::string, std::string> Mgr::load_store()
     dout(20) << "saw key '" << key << "'" << dendl;
 
     const std::string config_prefix = PyModule::config_prefix;
+    const std::string device_prefix = "device/";
 
-    if (key.substr(0, config_prefix.size()) == config_prefix) {
+    if (key.substr(0, config_prefix.size()) == config_prefix ||
+	key.substr(0, device_prefix.size()) == device_prefix) {
       dout(20) << "fetching '" << key << "'" << dendl;
       Command get_cmd;
       std::ostringstream cmd_json;
@@ -180,8 +186,28 @@ std::map<std::string, std::string> Mgr::load_store()
       lock.Unlock();
       get_cmd.wait();
       lock.Lock();
-      assert(get_cmd.r == 0);
-      loaded[key] = get_cmd.outbl.to_str();
+      if (get_cmd.r == 0) { // tolerate racing config-key change
+	if (key.substr(0, device_prefix.size()) == device_prefix) {
+	  // device/
+	  string devid = key.substr(device_prefix.size());
+	  map<string,string> meta;
+	  ostringstream ss;
+	  string val = get_cmd.outbl.to_str();
+	  int r = get_json_str_map(val, ss, &meta, false);
+	  if (r < 0) {
+	    derr << __func__ << " failed to parse " << val << ": " << ss.str()
+		 << dendl;
+	  } else {
+	    daemon_state.with_device_create(
+	      devid, [&meta] (DeviceState& dev) {
+		dev.set_metadata(std::move(meta));
+	      });
+	  }
+	} else {
+	  // config/
+	  loaded[key] = get_cmd.outbl.to_str();
+	}
+      }
     }
   }
 
@@ -202,7 +228,7 @@ void Mgr::init()
     // systemd restart us.
     exit(1);
   }
-  dout(4) << "Initialized server at " << server.get_myaddr() << dendl;
+  dout(4) << "Initialized server at " << server.get_myaddrs() << dendl;
 
   // Preload all daemon metadata (will subsequently keep this
   // up to date by watching maps, so do the initial load before
@@ -349,9 +375,11 @@ void Mgr::load_all_metadata()
     osd_metadata.erase("id");
     osd_metadata.erase("hostname");
 
+    map<string,string> m;
     for (const auto &i : osd_metadata) {
-      dm->metadata[i.first] = i.second.get_str();
+      m[i.first] = i.second.get_str();
     }
+    dm->set_metadata(m);
 
     daemon_state.insert(dm);
   }
@@ -413,11 +441,11 @@ void Mgr::handle_osd_map()
         auto addr_iter = metadata->metadata.find("front_addr");
         if (addr_iter != metadata->metadata.end()) {
           const std::string &metadata_addr = addr_iter->second;
-          const auto &map_addr = osd_map.get_addr(osd_id);
+          const auto &map_addrs = osd_map.get_addrs(osd_id);
 
-          if (metadata_addr != stringify(map_addr)) {
+          if (metadata_addr != stringify(map_addrs)) {
             dout(4) << "OSD[" << osd_id << "] addr change " << metadata_addr
-                    << " != " << stringify(map_addr) << dendl;
+                    << " != " << stringify(map_addrs) << dendl;
             update_meta = true;
           } else {
             dout(20) << "OSD[" << osd_id << "] addr unchanged: "

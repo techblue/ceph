@@ -984,7 +984,7 @@ namespace rgw {
     using ceph::decode;
     DecodeAttrsResult dar { false, false };
     fh_key fhk;
-    auto bl_iter_key1  = const_cast<buffer::list*>(ux_key1)->begin();
+    auto bl_iter_key1 = ux_key1->cbegin();
     decode(fhk, bl_iter_key1);
     if (fhk.version >= 2) {
       assert(this->fh.fh_hk == fhk.fh_hk);
@@ -992,7 +992,7 @@ namespace rgw {
       get<0>(dar) = true;
     }
 
-    auto bl_iter_unix1 = const_cast<buffer::list*>(ux_attrs1)->begin();
+    auto bl_iter_unix1 = ux_attrs1->cbegin();
     decode(*this, bl_iter_unix1);
     if (this->state.version < 2) {
       get<1>(dar) = true;
@@ -1511,8 +1511,7 @@ namespace rgw {
 
   done:
     dispose_processor(processor);
-    perfcounter->tinc(l_rgw_put_lat,
-		      (ceph_clock_now() - s->time));
+    perfcounter->tinc(l_rgw_put_lat, s->time_elapsed());
     return op_ret;
   } /* exec_finish */
 

@@ -54,7 +54,7 @@
 
 static void usage()
 {
-  cout << "usage: ceph-mds -i <ID> [flags] [[--hot-standby][rank]]\n"
+  cout << "usage: ceph-mds -i <ID> [flags] [--hot-standby <rank>]\n"
        << "  -m monitorip:port\n"
        << "        connect to monitor at given address\n"
        << "  --debug_mds n\n"
@@ -89,11 +89,7 @@ static void handle_mds_signal(int signum)
     mds->handle_signal(signum);
 }
 
-#ifdef BUILDING_FOR_EMBEDDED
-extern "C" int cephd_mds(int argc, const char **argv)
-#else
 int main(int argc, const char **argv)
-#endif
 {
   ceph_pthread_setname(pthread_self(), "ceph-mds");
 

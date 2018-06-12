@@ -41,7 +41,7 @@ void PurgeItem::encode(bufferlist &bl) const
   ENCODE_FINISH(bl);
 }
 
-void PurgeItem::decode(bufferlist::iterator &p)
+void PurgeItem::decode(bufferlist::const_iterator &p)
 {
   DECODE_START(1, p);
   decode((uint8_t&)action, p);
@@ -350,7 +350,6 @@ bool PurgeQueue::_consume()
 
   bool could_consume = false;
   while(can_consume()) {
-    could_consume = true;
 
     if (delayed_flush) {
       // We are now going to read from the journal, so any proactive
@@ -376,6 +375,7 @@ bool PurgeQueue::_consume()
       return could_consume;
     }
 
+    could_consume = true;
     // The journaler is readable: consume an entry
     bufferlist bl;
     bool readable = journaler.try_read_entry(bl);
@@ -383,7 +383,7 @@ bool PurgeQueue::_consume()
 
     dout(20) << " decoding entry" << dendl;
     PurgeItem item;
-    bufferlist::iterator q = bl.begin();
+    auto q = bl.cbegin();
     try {
       decode(item, q);
     } catch (const buffer::error &err) {

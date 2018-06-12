@@ -129,7 +129,7 @@ namespace rgw {
       ENCODE_FINISH(bl);
     }
 
-    void decode(bufferlist::iterator& bl) {
+    void decode(bufferlist::const_iterator& bl) {
       DECODE_START(2, bl);
       decode(fh_hk.bucket, bl);
       decode(fh_hk.object, bl);
@@ -633,7 +633,7 @@ namespace rgw {
       ENCODE_FINISH(bl);
     }
 
-    void decode(bufferlist::iterator& bl) {
+    void decode(bufferlist::const_iterator& bl) {
       DECODE_START(2, bl);
       uint32_t fh_type;
       decode(fh_type, bl);
@@ -2022,7 +2022,7 @@ public:
     RGWGetObj::end = UINT64_MAX;
   }
 
-  const string name() override { return "stat_obj"; }
+  const char* name() const override { return "stat_obj"; }
   RGWOpType get_type() override { return RGW_OP_STAT_OBJ; }
 
   real_time get_mtime() const {

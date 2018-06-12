@@ -194,6 +194,7 @@
 #define MSG_NOP                   0x607
 
 #define MSG_MON_HEALTH_CHECKS     0x608
+#define MSG_TIMECHECK2            0x609
 
 // *** ceph-mgr <-> OSD/MDS daemons ***
 #define MSG_MGR_OPEN              0x700
@@ -261,7 +262,7 @@ public:
   // zipkin tracing
   ZTracer::Trace trace;
   void encode_trace(bufferlist &bl, uint64_t features) const;
-  void decode_trace(bufferlist::iterator &p, bool create = false);
+  void decode_trace(bufferlist::const_iterator &p, bool create = false);
 
   class CompletionHook : public Context {
   protected:
@@ -466,6 +467,11 @@ public:
       return connection->get_peer_addr();
     return entity_addr_t();
   }
+  entity_addrvec_t get_source_addrs() const {
+    if (connection)
+      return connection->get_peer_addrs();
+    return entity_addrvec_t();
+  }
 
   // forwarded?
   entity_inst_t get_orig_source_inst() const {
@@ -476,6 +482,9 @@ public:
   }
   entity_addr_t get_orig_source_addr() const {
     return get_source_addr();
+  }
+  entity_addrvec_t get_orig_source_addrs() const {
+    return get_source_addrs();
   }
 
   // virtual bits
@@ -506,6 +515,6 @@ inline ostream& operator<<(ostream& out, const Message& m) {
 
 extern void encode_message(Message *m, uint64_t features, bufferlist& bl);
 extern Message *decode_message(CephContext *cct, int crcflags,
-                               bufferlist::iterator& bl);
+                               bufferlist::const_iterator& bl);
 
 #endif

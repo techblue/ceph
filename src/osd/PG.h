@@ -1033,6 +1033,12 @@ public:
 	ovec.insert(ovec.end(), i->second.begin(), i->second.end());
       }
     }
+
+    void send_notify(pg_shard_t to,
+		     const pg_notify_t &info, const PastIntervals &pi) {
+      assert(notify_list);
+      (*notify_list)[to.osd].push_back(make_pair(info, pi));
+    }
   };
 protected:
 
@@ -1622,6 +1628,7 @@ public:
 
     // chunky scrub
     hobject_t start, end;    // [start,end)
+    hobject_t max_end;       // Largest end that may have been sent to replicas
     eversion_t subset_last_update;
 
     // chunky scrub state
@@ -1697,6 +1704,7 @@ public:
       state = PG::Scrubber::INACTIVE;
       start = hobject_t();
       end = hobject_t();
+      max_end = hobject_t();
       subset_last_update = eversion_t();
       shallow_errors = 0;
       deep_errors = 0;
@@ -1992,8 +2000,7 @@ protected:
       void send_notify(pg_shard_t to,
 		       const pg_notify_t &info, const PastIntervals &pi) {
 	assert(state->rctx);
-	assert(state->rctx->notify_list);
-	(*state->rctx->notify_list)[to.osd].push_back(make_pair(info, pi));
+	state->rctx->send_notify(to, info, pi);
       }
     };
     friend class RecoveryMachine;
@@ -2276,7 +2283,7 @@ protected:
 
     struct Backfilling : boost::statechart::state< Backfilling, Active >, NamedState {
       typedef boost::mpl::list<
-	boost::statechart::transition< Backfilled, Recovered >,
+        boost::statechart::custom_reaction< Backfilled >,
 	boost::statechart::custom_reaction< DeferBackfill >,
 	boost::statechart::custom_reaction< UnfoundBackfill >,
 	boost::statechart::custom_reaction< RemoteReservationRejected >,
@@ -2289,6 +2296,8 @@ protected:
 	post_event(RemoteReservationRevokedTooFull());
 	return discard_event();
       }
+      void backfill_release_reservations();
+      boost::statechart::result react(const Backfilled& evt);
       boost::statechart::result react(const RemoteReservationRevokedTooFull& evt);
       boost::statechart::result react(const RemoteReservationRevoked& evt);
       boost::statechart::result react(const DeferBackfill& evt);
@@ -2932,7 +2941,7 @@ protected:
   void fulfill_info(pg_shard_t from, const pg_query_t &query,
 		    pair<pg_shard_t, pg_info_t> &notify_info);
   void fulfill_log(pg_shard_t from, const pg_query_t &query, epoch_t query_epoch);
-
+  void fulfill_query(const MQuery& q, RecoveryCtx *rctx);
   void check_full_transition(OSDMapRef lastmap, OSDMapRef osdmap);
 
   bool should_restart_peering(

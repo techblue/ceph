@@ -877,14 +877,14 @@ bool MDSRank::is_stale_message(Message *m) const
   if (m->get_source().is_mds()) {
     mds_rank_t from = mds_rank_t(m->get_source().num());
     if (!mdsmap->have_inst(from) ||
-	mdsmap->get_inst(from) != m->get_source_inst() ||
+	mdsmap->get_addrs(from) != m->get_source_addrs() ||
 	mdsmap->is_down(from)) {
       // bogus mds?
       if (m->get_type() == CEPH_MSG_MDS_MAP) {
 	dout(5) << "got " << *m << " from old/bad/imposter mds " << m->get_source()
 		<< ", but it's an mdsmap, looking at it" << dendl;
       } else if (m->get_type() == MSG_MDS_CACHEEXPIRE &&
-		 mdsmap->get_inst(from) == m->get_source_inst()) {
+		 mdsmap->get_addrs(from) == m->get_source_addrs()) {
 	dout(5) << "got " << *m << " from down mds " << m->get_source()
 		<< ", but it's a cache_expire, looking at it" << dendl;
       } else {
@@ -899,11 +899,31 @@ bool MDSRank::is_stale_message(Message *m) const
 
 Session *MDSRank::get_session(Message *m)
 {
-  Session *session = static_cast<Session *>(m->get_connection()->get_priv());
+  // do not carry ref
+  auto session = static_cast<Session *>(m->get_connection()->get_priv().get());
   if (session) {
     dout(20) << "get_session have " << session << " " << session->info.inst
 	     << " state " << session->get_state_name() << dendl;
-    session->put();  // not carry ref
+    // Check if we've imported an open session since (new sessions start closed)
+    if (session->is_closed()) {
+      Session *imported_session = sessionmap.get_session(session->info.inst.name);
+      if (imported_session && imported_session != session) {
+        dout(10) << __func__ << " replacing connection bootstrap session " << session << " with imported session " << imported_session << dendl;
+        imported_session->info.auth_name = session->info.auth_name;
+        //assert(session->info.auth_name == imported_session->info.auth_name);
+        assert(session->info.inst == imported_session->info.inst);
+        imported_session->connection = session->connection;
+        // send out any queued messages
+        while (!session->preopen_out_queue.empty()) {
+          imported_session->connection->send_message(session->preopen_out_queue.front());
+          session->preopen_out_queue.pop_front();
+        }
+        imported_session->auth_caps = session->auth_caps;
+        assert(session->get_nref() == 1);
+        imported_session->connection->set_priv(imported_session->get());
+        session = imported_session;
+      }
+    }
   } else {
     dout(20) << "get_session dne for " << m->get_source_inst() << dendl;
   }
@@ -927,13 +947,13 @@ void MDSRank::send_message_mds(Message *m, mds_rank_t mds)
 
   // send mdsmap first?
   if (mds != whoami && peer_mdsmap_epoch[mds] < mdsmap->get_epoch()) {
-    messenger->send_message(new MMDSMap(monc->get_fsid(), mdsmap),
-			    mdsmap->get_inst(mds));
+    messenger->send_to_mds(new MMDSMap(monc->get_fsid(), mdsmap),
+			   mdsmap->get_addrs(mds));
     peer_mdsmap_epoch[mds] = mdsmap->get_epoch();
   }
 
   // send message
-  messenger->send_message(m, mdsmap->get_inst(mds));
+  messenger->send_to_mds(m, mdsmap->get_addrs(mds));
 }
 
 void MDSRank::forward_message_mds(Message *m, mds_rank_t mds)
@@ -974,12 +994,12 @@ void MDSRank::forward_message_mds(Message *m, mds_rank_t mds)
 
   // send mdsmap first?
   if (peer_mdsmap_epoch[mds] < mdsmap->get_epoch()) {
-    messenger->send_message(new MMDSMap(monc->get_fsid(), mdsmap),
-			    mdsmap->get_inst(mds));
+    messenger->send_to_mds(new MMDSMap(monc->get_fsid(), mdsmap),
+			   mdsmap->get_addrs(mds));
     peer_mdsmap_epoch[mds] = mdsmap->get_epoch();
   }
 
-  messenger->send_message(m, mdsmap->get_inst(mds));
+  messenger->send_to_mds(m, mdsmap->get_addrs(mds));
 }
 
 
@@ -996,9 +1016,9 @@ void MDSRank::send_message_client_counted(Message *m, client_t client)
 
 void MDSRank::send_message_client_counted(Message *m, Connection *connection)
 {
-  Session *session = static_cast<Session *>(connection->get_priv());
+  // do not carry ref
+  auto session = static_cast<Session *>(connection->get_priv().get());
   if (session) {
-    session->put();  // do not carry ref
     send_message_client_counted(m, session);
   } else {
     dout(10) << "send_message_client_counted has no session for " << m->get_source_inst() << dendl;
@@ -1849,7 +1869,7 @@ void MDSRankDispatcher::handle_mds_map(
     mdsmap->get_down_mds_set(&down);
     for (set<mds_rank_t>::iterator p = down.begin(); p != down.end(); ++p) {
       if (oldmap->have_inst(*p) && olddown.count(*p) == 0) {
-        messenger->mark_down(oldmap->get_inst(*p).addr);
+        messenger->mark_down_addrs(oldmap->get_addrs(*p));
         handle_mds_failure(*p);
       }
     }
@@ -1862,8 +1882,8 @@ void MDSRankDispatcher::handle_mds_map(
     mdsmap->get_up_mds_set(up);
     for (set<mds_rank_t>::iterator p = up.begin(); p != up.end(); ++p) {
       if (oldmap->have_inst(*p) &&
-         oldmap->get_inst(*p) != mdsmap->get_inst(*p)) {
-        messenger->mark_down(oldmap->get_inst(*p).addr);
+	  oldmap->get_addrs(*p) != mdsmap->get_addrs(*p)) {
+        messenger->mark_down_addrs(oldmap->get_addrs(*p));
         handle_mds_failure(*p);
       }
     }

@@ -183,7 +183,7 @@ struct osdmap_manifest_t {
     ENCODE_FINISH(bl);
   }
 
-  void decode(bufferlist::iterator& bl)
+  void decode(bufferlist::const_iterator& bl)
   {
     DECODE_START(1, bl);
     decode(pinned, bl);
@@ -191,7 +191,7 @@ struct osdmap_manifest_t {
   }
 
   void decode(bufferlist& bl) {
-    bufferlist::iterator p = bl.begin();
+    auto p = bl.cbegin();
     decode(p);
   }
 
@@ -236,9 +236,6 @@ public:
   bool check_failures(utime_t now);
   bool check_failure(utime_t now, int target_osd, failure_info_t& fi);
   void force_failure(int target_osd, int by);
-
-  // the time of last msg(MSG_ALIVE and MSG_PGTEMP) proposed without delay
-  utime_t last_attempted_minwait_time;
 
   bool _have_pending_crush();
   CrushWrapper &_get_stable_crush();

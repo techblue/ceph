@@ -38,6 +38,7 @@
 #include "common/zipkin_trace.h"
 
 #include "messages/MOSDOp.h"
+#include "msg/Dispatcher.h"
 #include "osd/OSDMap.h"
 
 
@@ -233,7 +234,7 @@ struct ObjectOperation {
       : psize(ps), pmtime(pm), ptime(pt), pts(_pts), prval(prval) {}
     void finish(int r) override {
       if (r >= 0) {
-	bufferlist::iterator p = bl.begin();
+	auto p = bl.cbegin();
 	try {
 	  uint64_t size;
 	  ceph::real_time mtime;
@@ -332,7 +333,7 @@ struct ObjectOperation {
 				  int *prval)
       : data_bl(data_bl), extents(extents), prval(prval) {}
     void finish(int r) override {
-      bufferlist::iterator iter = bl.begin();
+      auto iter = bl.cbegin();
       if (r >= 0) {
         // NOTE: it's possible the sub-op has not been executed but the result
         // code remains zeroed. Avoid the costly exception handling on a
@@ -442,7 +443,7 @@ struct ObjectOperation {
     }
     void finish(int r) override {
       if (r >= 0) {
-	bufferlist::iterator p = bl.begin();
+	auto p = bl.cbegin();
 	try {
 	  if (pattrs)
 	    decode(*pattrs, p);
@@ -484,7 +485,7 @@ struct ObjectOperation {
     }
     void finish(int r) override {
       if (r >= 0) {
-	bufferlist::iterator p = bl.begin();
+	auto p = bl.cbegin();
 	try {
 	  if (pattrs)
 	    decode(*pattrs, p);
@@ -519,7 +520,7 @@ struct ObjectOperation {
       : pwatchers(pw), prval(pr) {}
     void finish(int r) override {
       if (r >= 0) {
-	bufferlist::iterator p = bl.begin();
+	auto p = bl.cbegin();
 	try {
 	  obj_list_watch_response_t resp;
 	  decode(resp, p);
@@ -552,7 +553,7 @@ struct ObjectOperation {
       : psnaps(ps), prval(pr) {}
     void finish(int r) override {
       if (r >= 0) {
-	bufferlist::iterator p = bl.begin();
+	auto p = bl.cbegin();
 	try {
 	  obj_list_snap_response_t resp;
 	  decode(resp, p);
@@ -766,7 +767,7 @@ struct ObjectOperation {
       if (r < 0 && r != -ENOENT)
 	return;
       try {
-	bufferlist::iterator p = bl.begin();
+	auto p = bl.cbegin();
 	object_copy_data_t copy_reply;
 	decode(copy_reply, p);
 	if (r == -ENOENT) {
@@ -858,7 +859,7 @@ struct ObjectOperation {
       if (r < 0)
 	return;
       try {
-	bufferlist::iterator p = bl.begin();
+	auto p = bl.cbegin();
 	bool isdirty;
 	decode(isdirty, p);
 	if (pisdirty)
@@ -894,7 +895,7 @@ struct ObjectOperation {
       if (r < 0)
 	return;
       try {
-	bufferlist::iterator p = bl.begin();
+	auto p = bl.cbegin();
 	std::list< std::pair<ceph::real_time, ceph::real_time> > ls;
 	decode(ls, p);
 	if (ptls) {
@@ -1154,6 +1155,10 @@ struct ObjectOperation {
 
   void tier_promote() {
     add_op(CEPH_OSD_OP_TIER_PROMOTE);
+  }
+
+  void unset_manifest() {
+    add_op(CEPH_OSD_OP_UNSET_MANIFEST);
   }
 
   void set_alloc_hint(uint64_t expected_object_size,
@@ -1478,7 +1483,7 @@ public:
       psize(ps), pmtime(pm), fin(c) {}
     void finish(int r) override {
       if (r >= 0) {
-	bufferlist::iterator p = bl.begin();
+	auto p = bl.cbegin();
 	uint64_t s;
 	ceph::real_time m;
 	decode(s, p);
@@ -1500,7 +1505,7 @@ public:
 							   fin(c) {}
     void finish(int r) override {
       if (r >= 0) {
-	bufferlist::iterator p = bl.begin();
+	auto p = bl.cbegin();
 	decode(attrset, p);
       }
       fin->complete(r);
@@ -1905,7 +1910,6 @@ public:
   void _send_op(Op *op);
   void _send_op_account(Op *op);
   void _cancel_linger_op(Op *op);
-  void finish_op(OSDSession *session, ceph_tid_t tid);
   void _finish_op(Op *op, int r);
   static bool is_pg_changed(
     int oldprimary,

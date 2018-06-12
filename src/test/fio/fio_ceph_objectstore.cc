@@ -281,6 +281,11 @@ struct Engine {
         ostr << "FIO get_db_statistics ";
         f->flush(ostr);
       }
+      ostr << "Mempools: ";
+      f->open_object_section("mempools");
+      mempool::dump(f);
+      f->close_section();
+      f->flush(ostr);
       
       ostr << "Generate db histogram: ";
       os->generate_db_histogram(f);
@@ -538,7 +543,7 @@ class UnitComplete : public Context {
   }
 };
 
-int fio_ceph_os_queue(thread_data* td, io_u* u)
+enum fio_q_status fio_ceph_os_queue(thread_data* td, io_u* u)
 {
   fio_ro_check(td, u);
 

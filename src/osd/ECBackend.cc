@@ -443,7 +443,7 @@ void ECBackend::handle_recovery_read_complete(
     ECUtil::HashInfo hinfo(ec_impl->get_chunk_count());
     if (op.obc->obs.oi.size > 0) {
       assert(op.xattrs.count(ECUtil::get_hinfo_key()));
-      bufferlist::iterator bp = op.xattrs[ECUtil::get_hinfo_key()].begin();
+      auto bp = op.xattrs[ECUtil::get_hinfo_key()].cbegin();
       decode(hinfo, bp);
     }
     op.hinfo = unstable_hashinfo_registry.lookup_or_create(hoid, hinfo);
@@ -1059,6 +1059,8 @@ error:
 	*i, ghobject_t::NO_GEN, shard),
       reply->attrs_read[*i]);
     if (r < 0) {
+      // If we read error, we should not return the attrs too.
+      reply->attrs_read.erase(*i);
       reply->buffers_read.erase(*i);
       reply->errors[*i] = r;
     }
@@ -1749,7 +1751,7 @@ ECUtil::HashInfoRef ECBackend::get_hash_info(
 	}
       }
       if (bl.length() > 0) {
-	bufferlist::iterator bp = bl.begin();
+	auto bp = bl.cbegin();
         try {
 	  decode(hinfo, bp);
         } catch(...) {
@@ -2342,13 +2344,21 @@ int ECBackend::send_all_remaining_reads(
   GenContext<pair<RecoveryMessages *, read_result_t& > &> *c =
     rop.to_read.find(hoid)->second.cb;
 
+  // (Note cuixf) If we need to read attrs and we read failed, try to read again.
+  bool want_attrs =
+    rop.to_read.find(hoid)->second.want_attrs &&
+    (!rop.complete[hoid].attrs || rop.complete[hoid].attrs->empty());
+  if (want_attrs) {
+    dout(10) << __func__ << " want attrs again" << dendl;
+  }
+
   rop.to_read.erase(hoid);
   rop.to_read.insert(make_pair(
       hoid,
       read_request_t(
 	offsets,
 	shards,
-	false,
+	want_attrs,
 	c)));
   do_read_op(rop);
   return 0;

@@ -900,7 +900,6 @@ cmake .. \
     -DCMAKE_INSTALL_MANDIR=%{_mandir} \
     -DCMAKE_INSTALL_DOCDIR=%{_docdir}/ceph \
     -DCMAKE_INSTALL_INCLUDEDIR=%{_includedir} \
-    -DWITH_EMBEDDED=OFF \
     -DWITH_MANPAGE=ON \
     -DWITH_PYTHON3=ON \
     -DWITH_MGR_DASHBOARD_FRONTEND=OFF \
@@ -1157,7 +1156,6 @@ fi
 %{_bindir}/rbd-replay-prep
 %endif
 %{_bindir}/ceph-post-file
-%{_bindir}/ceph-brag
 %{_tmpfilesdir}/ceph-common.conf
 %{_mandir}/man8/ceph-authtool.8*
 %{_mandir}/man8/ceph-conf.8*
@@ -1657,6 +1655,7 @@ fi
 
 %files -n librgw2
 %{_libdir}/librgw.so.*
+%{_libdir}/librgw_admin_user.so.*
 %if %{with lttng}
 %{_libdir}/librgw_op_tp.so*
 %{_libdir}/librgw_rados_tp.so*
@@ -1669,8 +1668,10 @@ fi
 %files -n librgw-devel
 %dir %{_includedir}/rados
 %{_includedir}/rados/librgw.h
+%{_includedir}/rados/librgw_admin_user.h
 %{_includedir}/rados/rgw_file.h
 %{_libdir}/librgw.so
+%{_libdir}/librgw_admin_user.so
 
 %if 0%{with python2}
 %files -n python-rgw

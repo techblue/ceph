@@ -404,7 +404,7 @@ public:
   void project_rstat_frag_to_inode(nest_info_t& rstat, nest_info_t& accounted_rstat,
 				   snapid_t ofirst, snapid_t last, 
 				   CInode *pin, bool cow_head);
-  void broadcast_quota_to_client(CInode *in);
+  void broadcast_quota_to_client(CInode *in, client_t exclude_ct = -1);
   void predirty_journal_parents(MutationRef mut, EMetaBlob *blob,
 				CInode *in, CDir *parent,
 				int flags, int linkunlink=0,
@@ -552,8 +552,8 @@ protected:
   set<mds_rank_t> rejoin_ack_gather;  // nodes from whom i need a rejoin ack
   map<mds_rank_t,map<inodeno_t,map<client_t,Capability::Import> > > rejoin_imported_caps;
   map<inodeno_t,pair<mds_rank_t,map<client_t,Capability::Export> > > rejoin_slave_exports;
-  map<client_t,entity_inst_t> rejoin_imported_client_map;
-  map<client_t,pair<Session*,uint64_t> > rejoin_imported_session_map;
+  map<client_t,entity_inst_t> rejoin_client_map;
+  map<client_t,pair<Session*,uint64_t> > rejoin_session_map;
 
   map<inodeno_t,pair<mds_rank_t,map<client_t,cap_reconnect_t> > > cap_exports; // ino -> target, client -> capex
 
@@ -602,6 +602,9 @@ public:
   void rejoin_recovered_caps(inodeno_t ino, client_t client, const cap_reconnect_t& icr, 
 			     mds_rank_t frommds=MDS_RANK_NONE) {
     cap_imports[ino][client][frommds] = icr;
+  }
+  void rejoin_recovered_client(client_t client, const entity_inst_t& inst) {
+    rejoin_client_map.emplace(client, inst);
   }
   bool rejoin_has_cap_reconnect(inodeno_t ino) const {
     return cap_imports.count(ino);
@@ -657,7 +660,7 @@ public:
   friend class C_MDC_RejoinSessionsOpened;
   void rejoin_open_ino_finish(inodeno_t ino, int ret);
   void rejoin_prefetch_ino_finish(inodeno_t ino, int ret);
-  void rejoin_open_sessions_finish(map<client_t,pair<Session*,uint64_t> >& imported_session_map);
+  void rejoin_open_sessions_finish(map<client_t,pair<Session*,uint64_t> >& session_map);
   bool process_imported_caps();
   void choose_lock_states_and_reconnect_caps();
   void prepare_realm_split(SnapRealm *realm, client_t client, inodeno_t ino,
@@ -1085,9 +1088,9 @@ public:
   void replicate_inode(CInode *in, mds_rank_t to, bufferlist& bl,
 		       uint64_t features);
   
-  CDir* add_replica_dir(bufferlist::iterator& p, CInode *diri, mds_rank_t from, list<MDSInternalContextBase*>& finished);
-  CDentry *add_replica_dentry(bufferlist::iterator& p, CDir *dir, list<MDSInternalContextBase*>& finished);
-  CInode *add_replica_inode(bufferlist::iterator& p, CDentry *dn, list<MDSInternalContextBase*>& finished);
+  CDir* add_replica_dir(bufferlist::const_iterator& p, CInode *diri, mds_rank_t from, list<MDSInternalContextBase*>& finished);
+  CDentry *add_replica_dentry(bufferlist::const_iterator& p, CDir *dir, list<MDSInternalContextBase*>& finished);
+  CInode *add_replica_inode(bufferlist::const_iterator& p, CDentry *dn, list<MDSInternalContextBase*>& finished);
 
   void replicate_stray(CDentry *straydn, mds_rank_t who, bufferlist& bl);
   CDentry *add_replica_stray(bufferlist &bl, mds_rank_t from);

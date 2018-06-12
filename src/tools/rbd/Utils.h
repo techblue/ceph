@@ -161,6 +161,9 @@ int get_image_options(const boost::program_options::variables_map &vm,
 int get_journal_options(const boost::program_options::variables_map &vm,
 			librbd::ImageOptions *opts);
 
+int get_flatten_option(const boost::program_options::variables_map &vm,
+                       librbd::ImageOptions *opts);
+
 int get_image_size(const boost::program_options::variables_map &vm,
                    uint64_t *size);
 
@@ -177,6 +180,8 @@ int init(const std::string &pool_name, librados::Rados *rados,
 
 int init_io_ctx(librados::Rados &rados, const std::string &pool_name,
                 librados::IoCtx *io_ctx);
+
+void disable_cache();
 
 int open_image(librados::IoCtx &io_ctx, const std::string &image_name,
                bool read_only, librbd::Image *image);

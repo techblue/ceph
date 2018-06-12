@@ -271,9 +271,8 @@ bool MonClient::ms_dispatch(Message *m)
   Mutex::Locker lock(monc_lock);
 
   if (_hunting()) {
-    auto pending_con = pending_cons.find(m->get_source_addr());
-    if (pending_con == pending_cons.end() ||
-	pending_con->second.get_con() != m->get_connection()) {
+    auto p = _find_pending_con(m->get_connection());
+    if (p == pending_cons.end()) {
       // ignore any messages outside hunting sessions
       ldout(cct, 10) << "discarding stray monitor message " << *m << dendl;
       m->put();
@@ -349,7 +348,7 @@ void MonClient::handle_monmap(MMonMap *m)
   auto peer = m->get_source_addr();
   string cur_mon = monmap.get_name(peer);
 
-  bufferlist::iterator p = m->monmapbl.begin();
+  auto p = m->monmapbl.cbegin();
   decode(monmap, p);
 
   ldout(cct, 10) << " got monmap " << monmap.epoch
@@ -374,8 +373,10 @@ void MonClient::handle_monmap(MMonMap *m)
 void MonClient::handle_config(MConfig *m)
 {
   ldout(cct,10) << __func__ << " " << *m << dendl;
-  cct->_conf->set_mon_vals(cct, m->config, config_cb);
-  m->put();
+  finisher.queue(new FunctionContext([this, m](int r) {
+	cct->_conf->set_mon_vals(cct, m->config, config_cb);
+	m->put();
+      }));
   got_config = true;
   map_cond.Signal();
 }
@@ -539,7 +540,7 @@ void MonClient::handle_auth(MAuthReply *m)
   }
 
   // hunting
-  auto found = pending_cons.find(m->get_source_addr());
+  auto found = _find_pending_con(m->get_connection());
   assert(found != pending_cons.end());
   int auth_err = found->second.handle_auth(m, entity_name, want_keys,
 					   rotating_secrets.get());
@@ -1316,7 +1317,7 @@ int MonConnection::authenticate(MAuthReply *m)
     auth->set_global_id(global_id);
     ldout(cct, 10) << "my global_id is " << m->global_id << dendl;
   }
-  auto p = m->result_bl.begin();
+  auto p = m->result_bl.cbegin();
   int ret = auth->handle_response(m->result, p);
   if (ret == -EAGAIN) {
     auto ma = new MAuth;

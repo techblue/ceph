@@ -276,19 +276,27 @@ void req_info::rebuild_from(req_info& src)
 }
 
 
-req_state::req_state(CephContext* _cct, RGWEnv* e, RGWUserInfo* u)
+req_state::req_state(CephContext* _cct, RGWEnv* e, RGWUserInfo* u, uint64_t id)
   : cct(_cct), user(u),
-    info(_cct, e)
+    info(_cct, e), id(id)
 {
   enable_ops_log = e->get_enable_ops_log();
   enable_usage_log = e->get_enable_usage_log();
   defer_to_bucket_acls = e->get_defer_to_bucket_acls();
 
-  time = ceph_clock_now();
+  time = Clock::now();
 }
 
 req_state::~req_state() {
   delete formatter;
+}
+
+std::ostream& req_state::gen_prefix(std::ostream& out) const
+{
+  auto p = out.precision();
+  return out << "req " << id << ' '
+      << std::setprecision(3) << std::fixed << time_elapsed() // '0.123s'
+      << std::setprecision(p) << std::defaultfloat << ' ';
 }
 
 bool search_err(rgw_http_errors& errs, int err_no, int& http_ret, string& code)
@@ -1800,7 +1808,7 @@ string rgw_pool::to_str() const
   return esc_name + ":" + esc_ns;
 }
 
-void rgw_raw_obj::decode_from_rgw_obj(bufferlist::iterator& bl)
+void rgw_raw_obj::decode_from_rgw_obj(bufferlist::const_iterator& bl)
 {
   using ceph::decode;
   rgw_obj old_obj;

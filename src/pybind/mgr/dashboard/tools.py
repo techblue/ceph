@@ -579,7 +579,7 @@ class Task(object):
         return hash((self.name, tuple(sorted(self.metadata.items()))))
 
     def __eq__(self, other):
-        return self.name == self.name and self.metadata == self.metadata
+        return self.name == other.name and self.metadata == other.metadata
 
     def __str__(self):
         return "Task(ns={}, md={})" \
@@ -739,3 +739,9 @@ def getargspec(func):
     except AttributeError:
         pass
     return _getargspec(func)
+
+
+def str_to_bool(var):
+    if isinstance(var, bool):
+        return var
+    return var.lower() in ("true", "yes", "1", 1)

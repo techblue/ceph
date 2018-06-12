@@ -1,11 +1,14 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, NgZone } from '@angular/core';
 
-import { Subject } from 'rxjs/Subject';
+import { Subject } from 'rxjs';
 
 import { AuthStorageService } from './auth-storage.service';
+import { ServicesModule } from './services.module';
 
-@Injectable()
+@Injectable({
+  providedIn: ServicesModule
+})
 export class SummaryService {
   // Observable sources
   private summaryDataSource = new Subject();
@@ -38,8 +41,6 @@ export class SummaryService {
   }
 
   get() {
-    return this.http.get('api/summary').toPromise().then((resp: any) => {
-      return resp;
-    });
+    return this.http.get('api/summary');
   }
 }
